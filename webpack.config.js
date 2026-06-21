@@ -34,6 +34,11 @@ const Dotenv = require('dotenv-webpack');
 			...glob.sync('assets/units/sfx/**/*.*', globOptions),
 		].map((p) => p.replace(/^assets\//, '').replace(/\.[^.]+$/, '')),
 	);
+	const locationPaths = JSON.stringify(
+		glob
+			.sync('assets/locations/*.jpg', globOptions)
+			.map((p) => p.replace(/^assets\/locations\//, '').replace(/\.jpg$/, '')),
+	);
 
 	fs.writeFileSync(
 		'assets/index.js',
@@ -51,6 +56,8 @@ export const phaserAutoloadAssetPaths=${phaserAutoloadAssets}
 export const assetPaths=${allAssets}
 
 export const soundPaths=${soundPaths}
+
+export const locationPaths=${locationPaths}
 
 `,
 	);

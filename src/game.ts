@@ -431,7 +431,7 @@ export default class Game {
 		});
 
 		// Background
-		this.Phaser.load.image('background', getUrl('locations/' + this.background_image + '/bg'));
+		this.Phaser.load.image('background', getUrl('locations/' + this.background_image));
 
 		// Branding
 		this.Phaser.load.image('AncientBeastLogo', getUrl('interface/AncientBeast'));

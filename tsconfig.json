@@ -16,5 +16,5 @@
 		"strict": false,
 		"types": ["jest", "jquery"]
 	},
-	"include": ["src", "types"]
+	"include": ["src", "types", "assets"]
 }

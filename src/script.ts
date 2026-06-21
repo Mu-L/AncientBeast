@@ -1,3 +1,5 @@
+import { locationPaths } from '../assets/index';
+
 // Import jQuery related stuff
 import $j from 'jquery';
 import 'jquery.transit';
@@ -773,14 +775,12 @@ function renderGameModeType(isMultiPlayer) {
 	return isMultiPlayer ? gameModeType.text('[ Online ]') : gameModeType.text('[ Hotseat ]');
 }
 
-const LOCATIONS = ['Dark Forest', 'Frozen Wall', 'Shadow Cave', 'Dragon Bones'];
-
 /**
  * Generate game config from form and return it.
  * @return {Partial<GameConfig>} The game config.
  */
 export function getGameConfig() {
-	const combatLocation = LOCATIONS[Math.floor(Math.random() * LOCATIONS.length)];
+	const combatLocation = locationPaths[Math.floor(Math.random() * locationPaths.length)];
 	const defaultConfig = {
 		gameMode: parseInt($j('input[name="gameMode"]:checked').val() as string, 10),
 		players: $j('input[name="players"]:checked')
