@@ -49,6 +49,15 @@ export default (G: Game) => {
 
 				this.creature.player.plasma -= 1;
 
+				// Burst the field *before* updateHealth so the existing shield on the
+				// inactive priest visibly transitions into the block flash instead of
+				// being torn down and re-created (which made the flash imperceptible
+				// on the last plasma point). updateHealth will try to remove the
+				// shield when plasma hits 0, but the defer-if-bursting guard in
+				// removePlasmaShield keeps it alive until the flash decays.
+				this.creature.burstPlasmaField();
+				this.creature.updateHealth();
+
 				this.creature.protectedFromFatigue = this.testRequirements();
 
 				damage.damages = {

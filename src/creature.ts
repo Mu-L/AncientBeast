@@ -13,6 +13,65 @@ import { AugmentedMatrix } from './utility/matrices';
 import { Trap } from './utility/trap';
 import { HEX_WIDTH_PX, hashOffsetCoords, offsetNeighbors } from './utility/const';
 import { CreatureType, Level, Realm, Unit, UnitName } from './data/types';
+import { PlasmaField } from './plasma-field';
+
+/** Vertical distance (in pixels) between the Dark Priest's feet and the Plasma Field center. */
+const PLASMA_FIELD_OFFSET_Y = 90;
+
+/** Per player-color hue shift (degrees) so each team's shield reads in its color. */
+const PLASMA_FIELD_HUE_BY_COLOR: Record<string, number> = {
+	red: 54,
+	blue: 300,
+	orange: 90,
+	green: 218,
+};
+
+/**
+ * Returns the horizontal offset (in unflipped sprite-local units) of the center
+ * of the topmost row of non-transparent pixels of the dark priest's cardboard
+ * texture. Subtracting half the texture width converts to an offset relative to
+ * the cardboard's anchor center; at runtime we multiply by the flip direction
+ * so the field is correctly mirrored when the priest faces right.
+ *
+ * Returns 0 when the texture cannot be read (e.g. mocked environment).
+ */
+function computeCardboardCenterOffset(phaser: Phaser.Game, sprite: Phaser.Sprite): number {
+	const key = sprite.key;
+	if (typeof key !== 'string') return 0;
+	const src = phaser.cache.getImage(key) as HTMLImageElement | HTMLCanvasElement | null;
+	if (!src || !(src.width > 0) || !(src.height > 0)) return 0;
+
+	const w = src.width;
+	const h = src.height;
+	const canvas = document.createElement('canvas');
+	canvas.width = w;
+	canvas.height = h;
+	const ctx = canvas.getContext('2d');
+	if (!ctx) return 0;
+
+	let data: Uint8ClampedArray;
+	try {
+		ctx.drawImage(src, 0, 0);
+		data = ctx.getImageData(0, 0, w, h).data;
+	} catch {
+		return 0;
+	}
+
+	for (let y = 0; y < h; y++) {
+		let minX = -1;
+		let maxX = -1;
+		for (let x = 0; x < w; x++) {
+			if (data[(y * w + x) * 4 + 3] > 16) {
+				if (minX === -1) minX = x;
+				maxX = x;
+			}
+		}
+		if (minX !== -1) {
+			return (minX + maxX) / 2 - w / 2;
+		}
+	}
+	return 0;
+}
 import { UnitDisplayInfo, UnitSize } from './data/units';
 
 // To fix @ts-expect-error 2554: properly type the arguments for the trigger functions in `game.ts`
@@ -177,6 +236,12 @@ export class Creature {
 	_brbSpent: boolean;
 
 	creatureSprite: CreatureSprite;
+
+	/** Procedural Plasma Field visual, shown for inactive Dark Priests with plasma. */
+	plasmaField: PlasmaField | null = null;
+
+	/** Base horizontal offset used to center the field on the cardboard's top opaque row. */
+	private _plasmaFieldBaseOffsetX = 0;
 
 	/**
 	 * @constructor
@@ -1569,7 +1634,7 @@ export class Creature {
 			game.UI.healthBar.animSize(this.health / this.stats.health);
 		}
 
-		// Dark Priest plasma shield when inactive
+		// Dark Priest plasma shield when inactive (active is shown on hover)
 		if (this.isDarkPriest()) {
 			if (this.hasCreaturePlayerGotPlasma() && this !== game.activeCreature) {
 				this.displayPlasmaShield();
@@ -1582,11 +1647,106 @@ export class Creature {
 	}
 
 	displayHealthStats() {
+		this.removePlasmaShield();
 		this.creatureSprite.setHealth(this.health, this.isFrozen() ? 'frozen' : 'health');
 	}
 
 	displayPlasmaShield() {
 		this.creatureSprite.setHealth(this.player.plasma, 'plasma');
+
+		// Inactive or active, a Dark Priest with plasma shows the procedural field.
+		if (!this.hasCreaturePlayerGotPlasma()) {
+			this.removePlasmaShield();
+			return;
+		}
+
+		this.showPlasmaShield();
+	}
+
+	/** Ensures the procedural Plasma Field visual exists and is visible. */
+	private showPlasmaShield() {
+		const phaser = this.game.Phaser;
+		if (!phaser || typeof phaser.add?.bitmapData !== 'function' || !this.creatureSprite.grp) {
+			return;
+		}
+
+		if (!this.plasmaField) {
+			const cardboard = this.creatureSprite.sprite;
+			const hueShift = PLASMA_FIELD_HUE_BY_COLOR[this.player.color] || 0;
+
+			// Horizontal centering is derived from the topmost opaque row of the
+			// cardboard texture, so the field aligns with the priest's head
+			// regardless of which variant the texture is (human / bot clone).
+			this._plasmaFieldBaseOffsetX = computeCardboardCenterOffset(phaser, cardboard);
+			const offsetXMirror = (cardboard.scale.x < 0 ? -1 : 1) * this._plasmaFieldBaseOffsetX;
+
+			this.plasmaField = new PlasmaField(
+				phaser,
+				cardboard.x + offsetXMirror,
+				cardboard.y - PLASMA_FIELD_OFFSET_Y,
+				{
+					parent: this.creatureSprite.grp,
+					hueShift,
+					creature: this,
+				},
+			);
+			this.creatureSprite.addPostUpdateHook(() => {
+				if (this.plasmaField) {
+					const dir = this.creatureSprite.sprite.scale.x < 0 ? -1 : 1;
+					this.plasmaField.positionTo(
+						this.creatureSprite.sprite,
+						dir * this._plasmaFieldBaseOffsetX,
+						PLASMA_FIELD_OFFSET_Y,
+					);
+				}
+			});
+		}
+
+		this.plasmaField.setVisible(true);
+	}
+
+	/**
+	 * Removes and frees the procedural Plasma Field visual, if present.
+	 * When a block burst is currently playing, the removal is deferred until
+	 * the burst finishes so the player actually gets to see the block flash.
+	 * Call with `immediate = true` to tear the field down right away (used on
+	 * creature death / destroy where a deferred cleanup would leak visuals).
+	 */
+	removePlasmaShield(immediate = false) {
+		if (!this.plasmaField) return;
+		const field = this.plasmaField;
+
+		if (!immediate && field.burstPowerVisible > 0) {
+			// Don't overwrite existing onBurstEnd callback
+			if (!field.onBurstEnd) {
+				field.onBurstEnd = () => this.removePlasmaShield(true);
+			}
+			return;
+		}
+
+		field.onBurstEnd = null;
+		field.destroy();
+		this.plasmaField = null;
+	}
+
+	/**
+	 * Triggers the short burst flash used when the shield counters an attack.
+	 * The field is (re)created if it doesn't currently exist, so the flash
+	 * always plays — even on the very last plasma point that depletes plasma
+	 * to 0 in the same frame. After the burst, if plasma is now 0, the field
+	 * is taken down via onBurstEnd.
+	 */
+	burstPlasmaField() {
+		if (!this.plasmaField && this.isDarkPriest()) {
+			this.showPlasmaShield();
+		}
+		const field = this.plasmaField;
+		if (!field) return;
+
+		field.burst();
+		if (!this.hasCreaturePlayerGotPlasma()) {
+			field.onBurstEnd = () => this.removePlasmaShield(true);
+		}
 	}
 
 	hasCreaturePlayerGotPlasma() {
@@ -1748,6 +1908,8 @@ export class Creature {
 		const game = this.game;
 
 		this.dead = true;
+
+		this.removePlasmaShield(true);
 
 		// Triggers
 		// @ts-expect-error 2554
@@ -2087,6 +2249,7 @@ export class Creature {
 	}
 
 	destroy() {
+		this.removePlasmaShield(true);
 		this.creatureSprite.destroy();
 		// NOTE: If this was a temp creature remove it from game.creatures.
 		// Dead creatures are supposed to stay in game.creatures.
@@ -2135,6 +2298,8 @@ class CreatureSprite {
 	private _xrayRefCreatures: Creature[] = []; // all ref creatures whose shape we cut out
 	private _xrayScratch: HTMLCanvasElement | null = null; // Part B scratch
 	private _xrayMask: HTMLCanvasElement | null = null; // union of all ref shapes
+
+	private _postUpdateHooks: Array<() => void> = [];
 
 	constructor(creature: Creature) {
 		const { game, player, type, team, display, size, id, health } = creature;
@@ -2243,6 +2408,12 @@ class CreatureSprite {
 					this._drawXrayBmd(this._xrayRefCreatures, this._xrayBmd);
 				}
 			}
+
+			// Run per-frame hooks registered by effects attached to this creature
+			// (e.g. keeping the Plasma Field visual centered on the Dark Priest).
+			for (let i = 0; i < this._postUpdateHooks.length; i++) {
+				this._postUpdateHooks[i]();
+			}
 		};
 
 		this.setHex(creature.hexagons[size - 1]);
@@ -2257,6 +2428,11 @@ class CreatureSprite {
 	}
 	get sprite() {
 		return this._sprite;
+	}
+
+	/** Registers a per-frame hook run from the group update (after tweens). */
+	addPostUpdateHook(fn: () => void): void {
+		this._postUpdateHooks.push(fn);
 	}
 
 	// TODO: Refactor
