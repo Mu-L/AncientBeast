@@ -3644,6 +3644,13 @@ export class UI {
 					</a>`;
 		};
 
+		// Remove any previously generated grid to avoid duplicating the avatar
+		// grid when a new UI is created (e.g. after a match restart/reconnect).
+		const existingRaster = rasterElement.querySelector('#creatureraster');
+		if (existingRaster) {
+			existingRaster.remove();
+		}
+
 		const tmpElement = document.createElement('div');
 		const rasterWrapper = document.createElement('div');
 		rasterWrapper.setAttribute('id', 'creatureraster');
