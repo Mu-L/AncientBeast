@@ -69,8 +69,45 @@ $j(() => {
 	let isJoiningLobby = false;
 
 	const joinCodeFromUrl = new URLSearchParams(window.location.search).get('join');
+	const lobbyCodeFromUrl = new URLSearchParams(window.location.search).get('lobby');
+	const netMode = new URLSearchParams(window.location.search).get('net');
+	const devvitPlayerId = new URLSearchParams(window.location.search).get('playerId') || 'anon';
 
-	if (joinCodeFromUrl) {
+	if (netMode === 'devvit') {
+		if (lobbyCodeFromUrl && lobbyCodeFromUrl !== 'menu') {
+			const parsedJoinCode = parseLobbyCodeInput(lobbyCodeFromUrl);
+			if (parsedJoinCode) {
+				G.multiplayer = true;
+				forceTwoPlayerMode();
+				renderGameModeType(G.multiplayer);
+				G.lobbyCode = parsedJoinCode;
+				$j('#lobbyCode').val(G.lobbyCode);
+				isJoiningLobby = true;
+				G.joinLobbyByCode(G.lobbyCode)
+					.then(() => {
+						isJoiningLobby = false;
+						updateLobbyUi();
+					})
+					.catch((error) => {
+						isJoiningLobby = false;
+						console.error(error);
+						G.lobby?.leaveMatch();
+						G.lobby = null;
+						G.lobbyState = null;
+						G.lobbyCode = '';
+						G.multiplayer = false;
+						$j('#p4').prop('disabled', false);
+						renderGameModeType(G.multiplayer);
+						$j('#lobbyCode').val('');
+						updateLobbyUi();
+					});
+			}
+		} else {
+			$j('body').addClass('devvit-mode');
+			$j('#devvit-queue').addClass('queue-screen');
+			startDevvitQueue(devvitPlayerId);
+		}
+	} else if (joinCodeFromUrl) {
 		const parsedJoinCode = parseLobbyCodeInput(joinCodeFromUrl);
 		if (parsedJoinCode) {
 			G.multiplayer = true;
@@ -696,7 +733,60 @@ $j(() => {
 
 		return false;
 	});
+
+	$j('#devvitCancelQueue').on('click', async () => {
+		window.location.href = '/index.html';
+	});
 });
+
+async function startDevvitQueue(playerId: string) {
+	const maxPolls = 60;
+
+	try {
+		const joinRes = await fetch('/internal/queue/join', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ playerId }),
+		});
+
+		if (!joinRes.ok) {
+			throw new Error('Failed to join queue');
+		}
+
+		const joinData = (await joinRes.json()) as { status: string; lobbyCode?: string };
+
+		if (joinData.status === 'matched' && joinData.lobbyCode) {
+			navigateToLobby(joinData.lobbyCode);
+			return;
+		}
+
+		for (let i = 0; i < maxPolls; i++) {
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+
+			const statusRes = await fetch(`/api/queue/status?playerId=${encodeURIComponent(playerId)}`);
+			if (!statusRes.ok) {
+				continue;
+			}
+
+			const statusData = (await statusRes.json()) as { status: string; lobbyCode?: string };
+			if (statusData.status === 'matched' && statusData.lobbyCode) {
+				navigateToLobby(statusData.lobbyCode);
+				return;
+			}
+		}
+
+		$j('#devvit-queue .queue-status').text('No opponent found, try again!');
+	} catch (error) {
+		console.error('Queue error:', error);
+		$j('#devvit-queue .queue-status').text('Matchmaking error, try again!');
+	}
+}
+
+function navigateToLobby(lobbyCode: string) {
+	const url = new URL(window.location.href);
+	url.searchParams.set('lobby', lobbyCode);
+	window.location.href = url.toString();
+}
 
 function parseLobbyCodeInput(value: string) {
 	const trimmed = value.trim();

@@ -122,7 +122,7 @@ export class PeerTransport implements ITransport {
 		this.myPeerId = '';
 	}
 
-	send(data: GameMessage): void {
+	async send(data: GameMessage): Promise<void> {
 		const openPeers: string[] = [];
 		const closedPeers: string[] = [];
 		this.connections.forEach((connection) => {
@@ -147,7 +147,7 @@ export class PeerTransport implements ITransport {
 		});
 	}
 
-	sendTo(peerId: PeerId, data: GameMessage): void {
+	async sendTo(peerId: PeerId, data: GameMessage): Promise<void> {
 		const connection = this.connections.get(peerId);
 
 		if (connection?.open) {
@@ -160,7 +160,7 @@ export class PeerTransport implements ITransport {
 		}
 	}
 
-	sendExcept(peerId: PeerId, data: GameMessage): void {
+	async sendExcept(peerId: PeerId, data: GameMessage): Promise<void> {
 		this.connections.forEach((connection) => {
 			if (connection.peer !== peerId && connection.open) {
 				try {

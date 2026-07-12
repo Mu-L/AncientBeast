@@ -1,0 +1,26 @@
+{
+  "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
+  "name": "ancientbeast666",
+  "permissions": {
+    "redis": true,
+    "http": {
+      "enable": true
+    }
+  },
+  "post": {
+    "dir": "deploy",
+    "entrypoints": {
+      "default": {
+        "entry": "index.html",
+        "height": "tall"
+      }
+    }
+  },
+  "blocks": {
+    "entry": "src/devvit/main.tsx"
+  },
+  "server": {
+    "dir": "dist/server",
+    "entry": "index.cjs"
+  }
+}

@@ -723,3 +723,72 @@ a {
 		border: none !important;
 	}
 }
+
+#devvit-queue {
+	display: none;
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	background: rgba(0, 0, 0, 0.85);
+	z-index: 100;
+	justify-content: center;
+	align-items: center;
+
+	&.queue-screen {
+		display: flex;
+	}
+
+	.queue-content {
+		text-align: center;
+		color: #fff;
+	}
+
+	.queue-title {
+		font-size: 2.5rem;
+		margin-bottom: 1rem;
+		font-weight: bold;
+	}
+
+	.queue-status {
+		font-size: 1.2rem;
+		margin-bottom: 1.5rem;
+		color: #ccc;
+	}
+
+	.queue-loader {
+		width: 40px;
+		height: 40px;
+		margin: 0 auto 1.5rem;
+		border: 4px solid #333;
+		border-top: 4px solid #c80909;
+		border-radius: 50%;
+		animation: spin 1s linear infinite;
+	}
+
+	.queue-cancel {
+		min-width: 160px;
+	}
+
+	@keyframes spin {
+		0% {
+			transform: rotate(0deg);
+		}
+		100% {
+			transform: rotate(360deg);
+		}
+	}
+}
+
+body.devvit-mode {
+	#pre-match .lobby,
+	#pre-match .setupFrame,
+	#gameSetupContainer > #gameTitle,
+	#gameSetupContainer > #websiteButton,
+	#gameSetupContainer > #contribute,
+	#gameSetupContainer > #version,
+	#gameSetupContainer > #discord {
+		display: none !important;
+	}
+}

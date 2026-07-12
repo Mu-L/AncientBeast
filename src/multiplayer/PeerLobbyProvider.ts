@@ -4,7 +4,7 @@ import { ITransport } from './transport/ITransport';
 import {
 	GameConfig,
 	GameMessage,
-	ILobbyProvider,
+	INetworkBackend,
 	isActionMessage,
 	LobbyCode,
 	LobbyPlayer,
@@ -15,7 +15,7 @@ import {
 	getPeerIdForLobby,
 } from './types';
 
-export class PeerLobbyProvider implements ILobbyProvider {
+export class PeerLobbyProvider implements INetworkBackend {
 	private readonly identity = new PlayerIdentity();
 	private readonly transport: ITransport;
 	private state: LobbyState = this.createEmptyState();
@@ -152,7 +152,7 @@ export class PeerLobbyProvider implements ILobbyProvider {
 		}
 	}
 
-	sendGameMessage(message: GameMessage): void {
+	async sendGameMessage(message: GameMessage): Promise<void> {
 		this.transport.send(message);
 	}
 

@@ -56,9 +56,9 @@ export interface TransportConnectOptions {
 export interface ITransport {
 	connect(lobbyId: string, options?: TransportConnectOptions): Promise<void>;
 	disconnect(): void;
-	send(data: GameMessage): void;
-	sendTo(peerId: PeerId, data: GameMessage): void;
-	sendExcept(peerId: PeerId, data: GameMessage): void;
+	send(data: GameMessage): Promise<void>;
+	sendTo(peerId: PeerId, data: GameMessage): Promise<void>;
+	sendExcept(peerId: PeerId, data: GameMessage): Promise<void>;
 	onMessage(cb: (data: GameMessage, peerId: PeerId) => void): void;
 	onPeerJoin(cb: (peerId: PeerId) => void): void;
 	onPeerLeave(cb: (peerId: PeerId) => void): void;
@@ -71,6 +71,7 @@ export interface LobbyPlayer {
 	peerId: PeerId;
 	name: string;
 	playerIndex: number;
+	isBot?: boolean;
 }
 
 export interface LobbySession {
@@ -94,7 +95,7 @@ export interface LobbyState {
 	status: LobbyStatus;
 }
 
-export interface ILobbyProvider {
+export interface INetworkBackend {
 	createLobby(config: GameConfig, code?: LobbyCode): Promise<LobbySession>;
 	joinLobby(code: LobbyCode): Promise<LobbySession>;
 	leaveLobby(): void;
@@ -102,7 +103,7 @@ export interface ILobbyProvider {
 	getLobbyState(): LobbyState;
 	getLocalPlayer(): LobbyPlayer | undefined;
 	markMatchStarted(): void;
-	sendGameMessage(message: GameMessage): void;
+	sendGameMessage(message: GameMessage): Promise<void>;
 	onLobbyUpdate(cb: (lobby: LobbyState) => void): void;
 	onGameMessage(cb: (message: GameMessage) => void): void;
 }

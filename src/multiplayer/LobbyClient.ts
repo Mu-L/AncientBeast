@@ -3,7 +3,7 @@ import { PeerLobbyProvider } from './PeerLobbyProvider';
 import {
 	GameConfig,
 	GameMessage,
-	ILobbyProvider,
+	INetworkBackend,
 	LobbyCode,
 	LobbySession,
 	LobbyState,
@@ -13,9 +13,9 @@ import {
 
 export class LobbyClient {
 	private readonly game: Game;
-	private readonly provider: ILobbyProvider;
+	private readonly provider: INetworkBackend;
 
-	constructor(game: Game, provider: ILobbyProvider = new PeerLobbyProvider()) {
+	constructor(game: Game, provider: INetworkBackend = new PeerLobbyProvider()) {
 		this.game = game;
 		this.provider = provider;
 
@@ -49,8 +49,8 @@ export class LobbyClient {
 		this.provider.leaveLobby();
 	}
 
-	sendAction(message: GameMessage): void {
-		this.provider.sendGameMessage(message);
+	async sendAction(message: GameMessage): Promise<void> {
+		await this.provider.sendGameMessage(message);
 	}
 
 	isMyTurn(): boolean {
@@ -85,7 +85,9 @@ export class LobbyClient {
 		}
 
 		const params = new URLSearchParams(window.location.search);
-		const code = params.get('join');
+		const join = params.get('join');
+		const lobby = params.get('lobby');
+		const code = join || lobby;
 
 		if (!code) {
 			return null;

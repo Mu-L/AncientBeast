@@ -16,6 +16,7 @@ import 'p2';
 // @ts-expect-error: Phaser CE has no official type declarations
 import Phaser, { Signal } from 'phaser';
 import { LobbyClient } from './multiplayer';
+import { createLobbyProvider } from './multiplayer/provider';
 import type {
 	GameConfig as MultiplayerGameConfig,
 	GameMessage,
@@ -127,6 +128,7 @@ export default class Game {
 	lobbyCode: string;
 	lobbyState: LobbyState | null;
 	onLobbyUpdate: ((lobby: LobbyState) => void) | null;
+	botOpponentIds: Set<number>;
 	realms: Realm[];
 	availableMusic = [];
 	inputMethod = 'Mouse';
@@ -243,6 +245,7 @@ export default class Game {
 		this.lobbyCode = '';
 		this.lobbyState = null;
 		this.onLobbyUpdate = null;
+		this.botOpponentIds = new Set<number>();
 		this.realms = ['-', 'A', 'E', 'G', 'L', 'P', 'S', 'W'];
 		this.availableMusic = [];
 		this.inputMethod = 'Mouse';
@@ -624,6 +627,9 @@ export default class Game {
 			} else {
 				player.controller = this.configData.players?.includes(player.id) ? 'human' : 'bot';
 			}
+			if (this.botOpponentIds.has(player.id)) {
+				player.controller = 'bot';
+			}
 			player.avatar = getDarkPriestAvatarUrl(player);
 			// Initialize players' starting positions
 			let pos: Point;
@@ -730,7 +736,7 @@ export default class Game {
 
 	async createLobby(config: MultiplayerGameConfig): Promise<LobbySession> {
 		if (!this.lobby) {
-			this.lobby = new LobbyClient(this);
+			this.lobby = new LobbyClient(this, createLobbyProvider());
 		}
 		const session = await this.lobby.createMatch(config);
 		this.lobbyCode = session.code;
@@ -740,7 +746,7 @@ export default class Game {
 
 	async joinLobbyByCode(code: string): Promise<LobbySession> {
 		if (!this.lobby) {
-			this.lobby = new LobbyClient(this);
+			this.lobby = new LobbyClient(this, createLobbyProvider());
 		}
 		const session = await this.lobby.joinMatch(code);
 		this.lobbyCode = code;
@@ -769,6 +775,11 @@ export default class Game {
 	handleLobbyMessage(message: GameMessage): void {
 		if (message.type === 'match-start') {
 			this.multiplayer = true;
+			this.botOpponentIds = new Set(
+				(message.players || [])
+					.filter((player) => player.isBot)
+					.map((player) => player.playerIndex),
+			);
 			this.loadGame(message.config as Partial<GameConfig>, true);
 			return;
 		}
