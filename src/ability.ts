@@ -353,6 +353,12 @@ export class Ability {
 	end(disableLogMsg?: boolean, deferredEnding?: boolean) {
 		const game = this.game;
 
+		// The active Dark Priest has performed an action by using an ability, so
+		// stop showing its Plasma Field just for being active.
+		if (this.creature === game.activeCreature) {
+			this.creature.hideActivePlasmaShield();
+		}
+
 		if (!disableLogMsg) {
 			game.log('%CreatureName' + this.creature.id + '% uses ' + this.title);
 		}

@@ -237,11 +237,18 @@ export class Creature {
 
 	creatureSprite: CreatureSprite;
 
-	/** Procedural Plasma Field visual, shown for inactive Dark Priests with plasma. */
+	/** Procedural Plasma Field visual, shown for Dark Priests with plasma. */
 	plasmaField: PlasmaField | null = null;
 
 	/** Base horizontal offset used to center the field on the cardboard's top opaque row. */
 	private _plasmaFieldBaseOffsetX = 0;
+
+	/**
+	 * Whether the Plasma Field is currently shown because this Dark Priest is the
+	 * active creature. Set when its turn begins and cleared once it performs an
+	 * action (so after the turn it reverts to the normal inactive/hover display).
+	 */
+	private _plasmaFieldActiveTurn = false;
 
 	/**
 	 * @constructor
@@ -539,6 +546,11 @@ export class Creature {
 		this.oldHealth = this.health;
 		this.noActionPossible = false;
 
+		// Show the Plasma Field for an active Dark Priest with plasma so the player
+		// can see their shield during their own turn. Cleared in deactivate() once
+		// the creature performs an action.
+		this._plasmaFieldActiveTurn = this.isDarkPriest() && this.hasCreaturePlayerGotPlasma();
+
 		const game = this.game;
 		const stats = this.stats;
 		const varReset = () => {
@@ -706,6 +718,12 @@ export class Creature {
 	 */
 	deactivate(reason: 'wait' | 'turn-end') {
 		const game = this.game;
+		// Skip / Delay are NOT actions that hide the Plasma Field — the turn just
+		// ends and the priest becomes inactive (or starts a fresh turn), so the
+		// field is kept by the normal inactive / hover display. We deliberately
+		// don't touch `_plasmaFieldActiveTurn` here, otherwise the priest would be
+		// briefly still flagged active during the turn handoff and any updateHealth
+		// call would destroy and re-create the field (a flicker for no reason).
 		// De-elevate health indicator when this unit is no longer active
 		this.resetBounce();
 		this.status.frozen = false;
@@ -1162,21 +1180,28 @@ export class Creature {
 	 * @param{Object} opts - Optional args object
 	 */
 	moveTo(hex: Hex, opts) {
-		const game = this.game,
-			defaultOpt = {
-				callback: function () {
-					return true;
-				},
-				callbackStepIn: function () {
-					return true;
-				},
-				animation: this.movementType() === 'flying' ? 'fly' : 'walk',
-				ignoreMovementPoint: false,
-				ignorePath: false,
-				customMovementPoint: 0,
-				overrideSpeed: 0,
-				turnAroundOnComplete: true,
-			};
+		const game = this.game;
+
+		// The active Dark Priest committing to a move has performed an action,
+		// so its Plasma Field should no longer be shown just for being active.
+		if (game.activeCreature?.id === this.id) {
+			this.hideActivePlasmaShield();
+		}
+
+		const defaultOpt = {
+			callback: function () {
+				return true;
+			},
+			callbackStepIn: function () {
+				return true;
+			},
+			animation: this.movementType() === 'flying' ? 'fly' : 'walk',
+			ignoreMovementPoint: false,
+			ignorePath: false,
+			customMovementPoint: 0,
+			overrideSpeed: 0,
+			turnAroundOnComplete: true,
+		};
 		let path;
 
 		opts = $j.extend(defaultOpt, opts);
@@ -1634,9 +1659,14 @@ export class Creature {
 			game.UI.healthBar.animSize(this.health / this.stats.health);
 		}
 
-		// Dark Priest plasma shield when inactive (active is shown on hover)
+		// Dark Priest plasma shield: shown for inactive priests with plasma, and
+		// for the active priest too — until it performs an action and the flag is
+		// cleared in deactivate().
 		if (this.isDarkPriest()) {
-			if (this.hasCreaturePlayerGotPlasma() && this !== game.activeCreature) {
+			if (
+				this.hasCreaturePlayerGotPlasma() &&
+				(this !== game.activeCreature || this._plasmaFieldActiveTurn)
+			) {
 				this.displayPlasmaShield();
 			} else {
 				this.displayHealthStats();
@@ -1654,13 +1684,27 @@ export class Creature {
 	displayPlasmaShield() {
 		this.creatureSprite.setHealth(this.player.plasma, 'plasma');
 
-		// Inactive or active, a Dark Priest with plasma shows the procedural field.
+		// Inactive or active (until it acts), a Dark Priest with plasma shows the
+		// procedural field.
 		if (!this.hasCreaturePlayerGotPlasma()) {
 			this.removePlasmaShield();
 			return;
 		}
 
 		this.showPlasmaShield();
+	}
+
+	/**
+	 * Hide the Plasma Field that is shown because this Dark Priest is the active
+	 * creature. Called the moment the priest performs an action (moving or using
+	 * an ability), so the field only stays up until it acts — much like the
+	 * active-unit indicator / Delay button collapsing once you commit a turn.
+	 * After this, the normal inactive / hover display takes over.
+	 */
+	hideActivePlasmaShield() {
+		if (!this._plasmaFieldActiveTurn) return;
+		this._plasmaFieldActiveTurn = false;
+		this.removePlasmaShield();
 	}
 
 	/** Ensures the procedural Plasma Field visual exists and is visible. */
