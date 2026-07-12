@@ -2495,7 +2495,9 @@ class CreatureSprite {
 	setDir(dir: 1 | -1) {
 		this._sprite.scale.setTo(dir, 1);
 
-		const originX = this._frameInfo.originX + getDarkPriestDisplayOffsetX(this._creature.player);
+		const originX =
+			this._frameInfo.originX +
+			(this._creature.isDarkPriest() ? getDarkPriestDisplayOffsetX(this._creature.player) : 0);
 		this._sprite.x =
 			(dir === 1
 				? originX
