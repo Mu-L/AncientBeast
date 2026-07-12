@@ -134,10 +134,9 @@ function _tickAllFields(): void {
 		_sharedTimer.delay = Phaser.Timer.SECOND / fps;
 	}
 	for (const field of _activeFields) {
-		if (!field.sprite.visible) continue;
-		// Skip fields scrolled off-screen; their last frame simply freezes.
-		if (field.sprite.inCamera === false) continue;
-		field.tick();
+		if (field.sprite.visible && field.sprite.inCamera !== false) {
+			field.tick();
+		}
 	}
 }
 
@@ -210,6 +209,7 @@ export class PlasmaField {
 	private lowCtx: CanvasRenderingContext2D;
 	private bmd: Phaser.BitmapData;
 	private low: HTMLCanvasElement;
+	private _imgData: ImageData;
 	private parent: Phaser.Group;
 	readonly sprite: Phaser.Sprite;
 	private creature: Creature | null;
@@ -246,6 +246,7 @@ export class PlasmaField {
 		this.low.width = this.rw;
 		this.low.height = this.rh;
 		this.lowCtx = this.low.getContext('2d', { willReadFrequently: true })!;
+		this._imgData = this.lowCtx.createImageData(this.rw, this.rh);
 
 		this.bmd = phaser.add.bitmapData(this.w, this.h);
 		this.sprite = this.parent.create
@@ -277,13 +278,12 @@ export class PlasmaField {
 		theta: number,
 		v: number,
 		depth: number,
-		t: number,
+		mt: number,
 		isBack: boolean,
 	): { s: number; drain: number; v: number } {
 		const set = this.settings;
 		const dir = isBack ? -1.0 : 1.0;
 
-		const mt = t * (0.28 + set.flowSpeed * 0.55);
 		const baseFlow = mt * set.flowSpeed;
 		const burst = this.burstPower;
 		const burstFlow = baseFlow * burst * 2.5;
@@ -312,7 +312,7 @@ export class PlasmaField {
 	private draw(): void {
 		const set = this.settings;
 		const ctx = this.lowCtx;
-		const img = ctx.createImageData(this.rw, this.rh);
+		const img = this._imgData;
 		const data = img.data;
 
 		const t = this.time;
@@ -320,6 +320,28 @@ export class PlasmaField {
 		// Outline has its own power that decays slower than the main burst,
 		// so the block outline ring stays visible long after the main flash.
 		const outlineBurst = this.outlinePower * set.blockOutline;
+
+		// Pre-compute values that are constant across all pixels this frame.
+		const cx = this.cx;
+		const cy = this.cy;
+		const rx = this.rx;
+		const ry = this.ry;
+		const mt = t * (0.28 + set.flowSpeed * 0.55);
+		const mtBack = mt + 0.1 * (0.28 + set.flowSpeed * 0.55);
+		const sin_t_1_8 = Math.sin(t * 1.8);
+		const sin_t_2_4_1_5 = Math.sin(t * 2.4 + 1.5);
+		const sin_t_2_0_2_2 = Math.sin(t * 2.0 + 2.2);
+		const sin_t_2_8_0_7 = Math.sin(t * 2.8 + 0.7);
+		const sin_t_1_5 = Math.sin(t * 1.5);
+		const sin_t_2_1_1_4 = Math.sin(t * 2.1 + 1.4);
+		const sin_t_2_4_2_0 = Math.sin(t * 2.4 + 2.0);
+		const sin_t_2_3_0_8 = Math.sin(t * 2.3 + 0.8);
+		const bf = set.bottomFade;
+		const bfPlus = bf + 0.11;
+		const dens = set.density;
+		const thick = set.thickness;
+		const backSurf = set.backSurface;
+
 		let idx = 0;
 
 		for (let py = 0; py < this.rh; py++) {
@@ -328,8 +350,8 @@ export class PlasmaField {
 			for (let px = 0; px < this.rw; px++, idx += 4) {
 				const x = px * this.renderScale + this.renderScale * 0.5;
 
-				const nx = (x - this.cx) / this.rx;
-				const ny = (y - this.cy) / this.ry;
+				const nx = (x - cx) / rx;
+				const ny = (y - cy) / ry;
 				const e = nx * nx + ny * ny;
 
 				if (e > 1) {
@@ -347,42 +369,38 @@ export class PlasmaField {
 				const edge = clamp((e - 0.55) / 0.45, 0, 1);
 
 				// BOTTOM ONLY. Top stays intact.
-				const bf = set.bottomFade;
 				const bottomMetric = 1 - v - set.bottomFadeCurve * (1 - sideDepth) * 0.12;
-				const bottomMask = smoothstep(bf, bf + 0.11, bottomMetric);
+				const bottomMask = smoothstep(bf, bfPlus, bottomMetric);
 				if (bottomMask <= 0.001) {
 					data[idx + 3] = 0;
 					continue;
 				}
 
-				const front = this.surfaceScalar(thetaFront, v, sideDepth, t, false);
-				const back = this.surfaceScalar(thetaBack, v, -sideDepth, t + 0.1, true);
-
-				const dens = set.density;
-				const thick = set.thickness;
+				const front = this.surfaceScalar(thetaFront, v, sideDepth, mt, false);
+				const back = this.surfaceScalar(thetaBack, v, -sideDepth, mtBack, true);
 
 				let f = 0;
-				f = Math.max(f, this.band(front.s * dens, -0.54 + 0.08 * sin(t * 1.8), 0.078 * thick));
-				f = Math.max(f, this.band(front.s * dens, -0.2 + 0.07 * sin(t * 2.4 + 1.5), 0.07 * thick));
-				f = Math.max(f, this.band(front.s * dens, 0.14 + 0.08 * sin(t * 2.0 + 2.2), 0.075 * thick));
-				f = Math.max(f, this.band(front.s * dens, 0.48 + 0.06 * sin(t * 2.8 + 0.7), 0.066 * thick));
+				f = Math.max(f, this.band(front.s * dens, -0.54 + 0.08 * sin_t_1_8, 0.078 * thick));
+				f = Math.max(f, this.band(front.s * dens, -0.2 + 0.07 * sin_t_2_4_1_5, 0.07 * thick));
+				f = Math.max(f, this.band(front.s * dens, 0.14 + 0.08 * sin_t_2_0_2_2, 0.075 * thick));
+				f = Math.max(f, this.band(front.s * dens, 0.48 + 0.06 * sin_t_2_8_0_7, 0.066 * thick));
 
 				let b = 0;
-				b = Math.max(b, this.band(back.s * dens, -0.5 + 0.08 * sin(t * 1.5), 0.078 * thick));
-				b = Math.max(b, this.band(back.s * dens, -0.15 + 0.07 * sin(t * 2.1 + 1.4), 0.07 * thick));
-				b = Math.max(b, this.band(back.s * dens, 0.2 + 0.08 * sin(t * 2.4 + 2.0), 0.075 * thick));
-				b = Math.max(b, this.band(back.s * dens, 0.52 + 0.06 * sin(t * 2.3 + 0.8), 0.066 * thick));
+				b = Math.max(b, this.band(back.s * dens, -0.5 + 0.08 * sin_t_1_5, 0.078 * thick));
+				b = Math.max(b, this.band(back.s * dens, -0.15 + 0.07 * sin_t_2_1_1_4, 0.07 * thick));
+				b = Math.max(b, this.band(back.s * dens, 0.2 + 0.08 * sin_t_2_4_2_0, 0.075 * thick));
+				b = Math.max(b, this.band(back.s * dens, 0.52 + 0.06 * sin_t_2_3_0_8, 0.066 * thick));
 
 				const crackleF =
 					0.7 +
-					0.18 * sin(8.0 * v + 1.8 * thetaFront - t * 5.2) +
-					0.12 * sin(11.0 * front.drain - 2.1 * thetaFront + t * 7.0);
-				const crackleB = 0.58 + 0.16 * sin(7.6 * v + 1.7 * thetaBack + t * 3.6);
+					0.18 * Math.sin(8.0 * v + 1.8 * thetaFront - t * 5.2) +
+					0.12 * Math.sin(11.0 * front.drain - 2.1 * thetaFront + t * 7.0);
+				const crackleB = 0.58 + 0.16 * Math.sin(7.6 * v + 1.7 * thetaBack + t * 3.6);
 				f = clamp(f * crackleF, 0, 1.18);
 				b = clamp(b * crackleB, 0, 1.05);
 
 				let frontI = f * (0.22 + 0.52 * sideDepth + 0.12 * edge);
-				let backI = b * set.backSurface * (0.05 + 0.38 * edge + 0.12 * (1 - sideDepth));
+				let backI = b * backSurf * (0.05 + 0.38 * edge + 0.12 * (1 - sideDepth));
 
 				let shock = 0;
 				if (burst > 0.02) {
@@ -447,14 +465,16 @@ export class PlasmaField {
 		if (outlineBurst > 0.02 && set.blockOutline > 0 && this.isUpgraded()) {
 			out.save();
 			out.globalCompositeOperation = 'lighter';
-			const outlineShadowHue = hueRotateRgb(255, 55, 232, set.hueShift);
+			// hueRotateRgb is computed once because both the shadow and the stroke
+			// use the same source color (255, 55, 232).
+			const outlineHue = hueRotateRgb(255, 55, 232, set.hueShift);
 			out.shadowColor =
 				'rgba(' +
-				Math.round(clamp(outlineShadowHue.r, 0, 255)) +
+				Math.round(clamp(outlineHue.r, 0, 255)) +
 				',' +
-				Math.round(clamp(outlineShadowHue.g, 0, 255)) +
+				Math.round(clamp(outlineHue.g, 0, 255)) +
 				',' +
-				Math.round(clamp(outlineShadowHue.b, 0, 255)) +
+				Math.round(clamp(outlineHue.b, 0, 255)) +
 				', .90)';
 			out.shadowBlur = 18 + outlineBurst * 10;
 			out.lineWidth = 3.6;
@@ -463,26 +483,25 @@ export class PlasmaField {
 
 			const rxO = this.rx + 4;
 			const ryO = this.ry + 6;
-			const stepsO = 96;
+			const stepsO = 48;
 
 			for (let oi = 0; oi < stepsO; oi++) {
 				const a0 = (oi / stepsO) * Math.PI * 2;
 				const a1 = ((oi + 1) / stepsO) * Math.PI * 2;
 				const am = (a0 + a1) * 0.5;
 
-				const xm = this.cx + rxO * Math.cos(am);
-				const ym = this.cy + ryO * Math.sin(am);
-				const nym = clamp((ym - this.cy) / this.ry, -1, 1);
+				const xm = cx + rxO * Math.cos(am);
+				const ym = cy + ryO * Math.sin(am);
+				const nym = clamp((ym - cy) / ry, -1, 1);
 				const vm = clamp((nym + 1) * 0.5, 0, 1);
-				const uO = clamp((xm - this.cx) / rxO, -0.999, 0.999);
+				const uO = clamp((xm - cx) / rxO, -0.999, 0.999);
 				const sideDepthO = Math.sqrt(Math.max(0, 1 - uO * uO));
 				const outlineMetric = 1 - vm - set.bottomFadeCurve * (1 - sideDepthO) * 0.12;
-				const maskO = smoothstep(set.bottomFade, set.bottomFade + 0.11, outlineMetric);
+				const maskO = smoothstep(bf, bfPlus, outlineMetric);
 
 				if (maskO <= 0.015) continue;
 
 				const alphaO = 0.45 * outlineBurst * maskO;
-				const outlineHue = hueRotateRgb(255, 55, 232, set.hueShift);
 				out.strokeStyle =
 					'rgba(' +
 					Math.round(clamp(outlineHue.r, 0, 255)) +
@@ -495,8 +514,8 @@ export class PlasmaField {
 					')';
 
 				out.beginPath();
-				out.moveTo(this.cx + rxO * Math.cos(a0), this.cy + ryO * Math.sin(a0));
-				out.lineTo(this.cx + rxO * Math.cos(a1), this.cy + ryO * Math.sin(a1));
+				out.moveTo(cx + rxO * Math.cos(a0), cy + ryO * Math.sin(a0));
+				out.lineTo(cx + rxO * Math.cos(a1), cy + ryO * Math.sin(a1));
 				out.stroke();
 			}
 
