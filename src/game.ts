@@ -1727,7 +1727,7 @@ export default class Game {
 				});
 				break;
 			case 'ability': {
-				const args = $j.makeArray(o.args[1]);
+				const args = $j.makeArray(o.args || []);
 				const ability = this.activeCreature.abilities[o.id];
 
 				if (o.target.type == 'hex') {
