@@ -6,6 +6,7 @@ import { Direction, Hex } from '../utility/hex';
 import * as matrices from '../utility/matrices';
 import { getDirectionFromDelta } from '../utility/position';
 import { isTeam, Team } from '../utility/team';
+import { HEX_WIDTH_PX } from '../utility/const';
 
 const getFrontLanes = (creature: Creature) => [
 	...creature.getHexMap(matrices.fronttop1hex, false),
@@ -58,14 +59,27 @@ const getMeatSickleStartX = (creature: Creature, direction: Direction) => {
 
 const getMeatSicklePath = (G: Game, creature: Creature, direction: Direction, distance: number) => {
 	const hexLineDirection = getMeatSickleHexLineDirection(direction, creature.player.flipped);
-	return G.grid
-		.getHexLine(
-			getMeatSickleStartX(creature, direction),
-			creature.y,
-			hexLineDirection,
-			creature.player.flipped,
-		)
-		.slice(1, distance + 1);
+	const rawLine = G.grid.getHexLine(
+		getMeatSickleStartX(creature, direction),
+		creature.y,
+		hexLineDirection,
+		creature.player.flipped,
+	);
+	// Skip any of the caster's own hexagons at the very start of the line so the
+	// first path hex is always a hex adjacent to the caster, never the caster
+	// itself. A size-2 flipped creature can have two of its own hexes at the
+	// line's start (e.g. the DownLeft/Left/UpLeft directions), and a naive
+	// slice(1) would leave the caster's other hex as the "first hexagon" of the
+	// path — clicking it (the caster) would never trigger the ability.
+	let startIndex = 0;
+	while (
+		startIndex < rawLine.length &&
+		rawLine[startIndex].creature &&
+		rawLine[startIndex].creature.id === creature.id
+	) {
+		startIndex++;
+	}
+	return rawLine.slice(startIndex, startIndex + distance);
 };
 
 const getMeatSickleLanding = (line: Hex[], target: Creature, targetIndex: number) => {
@@ -266,6 +280,198 @@ const applyMovementRestriction = (source: Creature, target: Creature, G: Game) =
 	// disableHint=true suppresses the floating tooltip when the effect is applied.
 	target.addEffect(effect, undefined, undefined, false, true);
 	G.log(`%CreatureName${target.id}% will be unable to use movement abilities on its next turn`);
+};
+
+const MEAT_SICKLE_CHAIN_KEY = 'object_chain';
+const MEAT_SICKLE_HOOK_KEY = 'object_hook';
+
+const getMeatSickleSpritesAvailable = (G: Game) => {
+	const cache = G?.Phaser?.cache;
+	if (!cache) {
+		return false;
+	}
+	const chainImg = cache.getImage(MEAT_SICKLE_CHAIN_KEY);
+	const hookImg = cache.getImage(MEAT_SICKLE_HOOK_KEY);
+	return Boolean(chainImg && hookImg);
+};
+
+const playMeatSickleHookEffect = (
+	G: Game,
+	sourceCreature: Creature,
+	sourceHex: Hex,
+	targetCreature: Creature,
+	targetHex: Hex,
+	durationMs: number,
+	onComplete?: () => void,
+) => {
+	if (!getMeatSickleSpritesAvailable(G) || !G.grid?.creatureGroup) {
+		if (onComplete) {
+			onComplete();
+		}
+		return;
+	}
+
+	const chainHeight = 30;
+
+	// Visual centers (including y) so the chain/hook can point at the target in any
+	// direction — right, left, up, down or diagonal — with no separate mirroring.
+	const getCreatureCenter = (creature: Creature, fallbackHex: Hex): { x: number; y: number } => {
+		const grp = creature.creatureSprite?.grp;
+		const sprite = creature.creatureSprite?.sprite;
+		if (grp && sprite) {
+			return { x: grp.x + sprite.x, y: grp.y + sprite.y - sprite.texture.height / 2 };
+		}
+		return {
+			x: (fallbackHex.displayPos.x ?? 0) + HEX_WIDTH_PX / 2 + 5,
+			y: (fallbackHex.displayPos.y ?? 0) + 15,
+		};
+	};
+
+	const targetCenter = getCreatureCenter(targetCreature, targetHex);
+
+	// Origin: Horn Head's left wrist. The coordinates (150, 150) are pixels on the
+	// creature's cardboard sprite image (top-left origin). The sprite is bottom-
+	// anchored, so we map the image pixel into the group's coordinate space using
+	// the sprite's on-screen position. Horn Head's offset-y is negative, so the
+	// resulting y offset from the group origin is negative — the wrist sits above
+	// the group origin, never below it.
+	const sourceSprite = sourceCreature.creatureSprite?.sprite;
+	const MEAT_SICKLE_LAUNCH_PIXEL_X = 169;
+	const MEAT_SICKLE_LAUNCH_PIXEL_Y = 23;
+	const launchPoint = (() => {
+		const grp = sourceCreature.creatureSprite?.grp;
+		if (grp && sourceSprite) {
+			// The sprite is mirrored when the creature is flipped, so the wrist
+			// pixel (measured from the image's left edge) is mirrored too — the
+			// emit point must come from the side the creature is actually facing.
+			const flipped = sourceCreature.player.flipped;
+			const launchPixelX = flipped
+				? sourceSprite.texture.width - MEAT_SICKLE_LAUNCH_PIXEL_X
+				: MEAT_SICKLE_LAUNCH_PIXEL_X;
+			const imageTopX = sourceSprite.x - sourceSprite.texture.width / 2;
+			const imageTopY = sourceSprite.y - sourceSprite.texture.height;
+			return {
+				x: grp.x + imageTopX + launchPixelX,
+				y: grp.y + imageTopY + MEAT_SICKLE_LAUNCH_PIXEL_Y,
+			};
+		}
+		const fallbackX = sourceCreature.player.flipped
+			? (sourceHex.displayPos.x ?? 0) - MEAT_SICKLE_LAUNCH_PIXEL_X
+			: (sourceHex.displayPos.x ?? 0) + MEAT_SICKLE_LAUNCH_PIXEL_X;
+		return {
+			x: fallbackX,
+			y: (sourceHex.displayPos.y ?? 0) - MEAT_SICKLE_LAUNCH_PIXEL_Y,
+		};
+	})();
+
+	// Direction vector from the wrist toward the target, used to aim the launch.
+	const totalDistance = Math.max(
+		1,
+		Math.hypot(targetCenter.x - launchPoint.x, targetCenter.y - launchPoint.y),
+	);
+	const dirX = Math.cos(Math.atan2(targetCenter.y - launchPoint.y, targetCenter.x - launchPoint.x));
+	const dirY = Math.sin(Math.atan2(targetCenter.y - launchPoint.y, targetCenter.x - launchPoint.x));
+
+	// Render the chain and hook in their own group appended after the creature
+	// group, so they always draw on top of Horn Head and the (dragged) target
+	// regardless of depth re-sorting during movement.
+	const fxGroup = G.Phaser.add.group(G.grid.display, 'meatSickleFxGrp');
+
+	// Chain: a single tileable sprite that *emits* from the wrist. Its length grows
+	// from the emission point toward the hook and its texture scrolls every frame so
+	// the links keep flowing outward (loopable) instead of popping out in chunks.
+	const chain = G.Phaser.add.tileSprite(
+		launchPoint.x,
+		launchPoint.y,
+		0,
+		chainHeight,
+		MEAT_SICKLE_CHAIN_KEY,
+	);
+	fxGroup.add(chain);
+	chain.anchor.setTo(0, 0.5);
+	chain.visible = false;
+
+	const hook = fxGroup.create(launchPoint.x, launchPoint.y, MEAT_SICKLE_HOOK_KEY);
+	hook.anchor.setTo(0.5, 0.5);
+	hook.alpha = 0;
+
+	let active = true;
+	const stop = () => {
+		active = false;
+		fxGroup.destroy(true);
+	};
+
+	const HOOK_HALF_LENGTH = 40;
+
+	// Draw the chain from the emission point up to the hook's back edge (flush, no
+	// overlap) and rotate everything to face the current hook position. Recomputing
+	// the angle every frame keeps the connection intact and stops the chain from
+	// swinging loose while the hooked unit is dragged around.
+	const renderAt = (hookX: number, hookY: number, hookAlpha: number) => {
+		const dx = hookX - launchPoint.x;
+		const dy = hookY - launchPoint.y;
+		const angleNow = Math.atan2(dy, dx);
+		const dist = Math.hypot(dx, dy);
+		const chainLength = Math.max(0, dist - HOOK_HALF_LENGTH);
+
+		chain.x = launchPoint.x;
+		chain.y = launchPoint.y;
+		chain.rotation = angleNow;
+		chain.width = chainLength;
+		chain.visible = chainLength > 1;
+		// Anchor the tile pattern at the *far* (hook) end so the chain extrudes new
+		// links out of the emission point as it grows/reels, instead of popping in
+		// whole tiles at the tip.
+		chain.tilePositionX = -chainLength;
+
+		hook.x = hookX;
+		hook.y = hookY;
+		hook.rotation = angleNow;
+		hook.alpha = hookAlpha;
+	};
+
+	const startTime = Date.now();
+	const flyStep = () => {
+		if (!active) {
+			return;
+		}
+		const progress = Math.min(1, (Date.now() - startTime) / durationMs);
+		const easing = 1 - Math.pow(1 - progress, 3);
+		// Chain and hook extend together at the same speed during the launch. The
+		// hook starts transparent at the emission point and fades in as it travels.
+		const hookDistance = totalDistance * easing;
+		renderAt(
+			launchPoint.x + dirX * hookDistance,
+			launchPoint.y + dirY * hookDistance,
+			Math.min(1, progress * 2),
+		);
+
+		if (progress < 1) {
+			setTimeout(flyStep, 16);
+			return;
+		}
+
+		// Reeling phase: hook stays latched to the target (moving with it at the same
+		// speed) while the chain reels in behind it. We render at the target's live
+		// position every frame so the hook never drifts or swings loose.
+		hook.alpha = 1;
+		const track = () => {
+			if (!active) {
+				return;
+			}
+			const tc = getCreatureCenter(targetCreature, targetHex);
+			renderAt(tc.x, tc.y, 1);
+			setTimeout(track, 16);
+		};
+		track();
+		if (onComplete) {
+			onComplete();
+		}
+	};
+
+	flyStep();
+
+	return stop;
 };
 
 /** Creates the abilities
@@ -616,6 +822,17 @@ export default (G: Game) => {
 					return;
 				}
 
+				const casterHookHex = line[0] ?? this.creature.hexagons[0];
+				const targetHookHex = line[targetIndex] ?? target.hexagons[0];
+				let cleanupMeatSickleEffect: (() => void) | null = null;
+
+				const teardownMeatSickleEffect = () => {
+					if (cleanupMeatSickleEffect) {
+						cleanupMeatSickleEffect();
+						cleanupMeatSickleEffect = null;
+					}
+				};
+
 				const { landingHex, landingIndex } =
 					targetIndex > 1
 						? getMeatSickleLanding(line, target, targetIndex)
@@ -626,6 +843,17 @@ export default (G: Game) => {
 				const damageHexes = Math.max(0, pulledHexes - movementDrain);
 
 				if (this.isUpgraded() && targetIndex === 1) {
+					const cleanup = playMeatSickleHookEffect(
+						G,
+						this.creature,
+						casterHookHex,
+						target,
+						targetHookHex,
+						350,
+					);
+					if (typeof cleanup === 'function') {
+						setTimeout(cleanup, 500);
+					}
 					target.takeDamage(
 						new Damage(ability.creature, { pierce: ability.damages.pierce }, 1, [], G),
 					);
@@ -635,61 +863,89 @@ export default (G: Game) => {
 				}
 
 				if (!landingHex) {
+					const cleanup = playMeatSickleHookEffect(
+						G,
+						this.creature,
+						casterHookHex,
+						target,
+						targetHookHex,
+						350,
+					);
+					if (typeof cleanup === 'function') {
+						setTimeout(cleanup, 500);
+					}
 					G.activeCreature.queryMove();
 					return;
 				}
 
-				target.moveTo(landingHex, {
-					ignoreMovementPoint: true,
-					ignorePath: true,
-					callback: function () {
-						if (movementDrain > 0) {
-							target.replaceEffect(
-								new Effect(
-									ability.title,
-									ability.creature,
-									target,
-									'onStartPhase',
-									{
-										effectFn: function (effect, creatureOrHexOrDamage) {
-											const affectedCreature = creatureOrHexOrDamage as Creature;
-											if (!(affectedCreature instanceof Creature)) {
-												return;
-											}
+				// Play the hook + chain effect; the moveTo happens AFTER the hook
+				// latches onto the target (in onComplete), so the chain+hook and
+				// the dragged unit move together toward Horn Head in perfect sync.
+				cleanupMeatSickleEffect =
+					playMeatSickleHookEffect(
+						G,
+						this.creature,
+						casterHookHex,
+						target,
+						targetHookHex,
+						350,
+						() => {
+							target.moveTo(landingHex, {
+								ignoreMovementPoint: true,
+								ignorePath: true,
+								callback: function () {
+									teardownMeatSickleEffect();
+									if (movementDrain > 0) {
+										target.replaceEffect(
+											new Effect(
+												ability.title,
+												ability.creature,
+												target,
+												'onStartPhase',
+												{
+													effectFn: function (effect, creatureOrHexOrDamage) {
+														const affectedCreature = creatureOrHexOrDamage as Creature;
+														if (!(affectedCreature instanceof Creature)) {
+															return;
+														}
 
-											affectedCreature.remainingMove = Math.max(
-												0,
-												affectedCreature.remainingMove - movementDrain,
-											);
-											effect.deleteEffect();
-										},
-										deleteTrigger: '',
-										turnLifetime: -1,
-										stackable: false,
-										deleteOnOwnerDeath: true,
-									},
-									G,
-								),
-							);
+														affectedCreature.remainingMove = Math.max(
+															0,
+															affectedCreature.remainingMove - movementDrain,
+														);
+														effect.deleteEffect();
+													},
+													deleteTrigger: '',
+													turnLifetime: -1,
+													stackable: false,
+													deleteOnOwnerDeath: true,
+												},
+												G,
+											),
+										);
 
-							G.log(`%CreatureName${target.id}% will lose ${movementDrain} movement next turn`);
-						}
+										G.log(
+											`%CreatureName${target.id}% will lose ${movementDrain} movement next turn`,
+										);
+									}
 
-						if (damageHexes > 0) {
-							target.takeDamage(
-								new Damage(
-									ability.creature,
-									{ pierce: damageHexes * ability.damages.pierce },
-									1,
-									[],
-									G,
-								),
-							);
-						}
+									if (damageHexes > 0) {
+										target.takeDamage(
+											new Damage(
+												ability.creature,
+												{ pierce: damageHexes * ability.damages.pierce },
+												1,
+												[],
+												G,
+											),
+										);
+									}
 
-						G.activeCreature.queryMove();
-					},
-				});
+									G.activeCreature.queryMove();
+								},
+							});
+						},
+					) ?? null;
 			},
 		},
 		{
