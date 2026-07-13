@@ -838,10 +838,19 @@ export default (G: Game) => {
 					}
 				};
 
-				const { landingHex, landingIndex } =
+				let { landingHex, landingIndex } =
 					targetIndex >= 1
 						? getMeatSickleLanding(line, target, targetIndex)
 						: { landingHex: undefined, landingIndex: -1 };
+
+			// If no valid landing hex found, try the hex immediately before target (if walkable)
+			if (!landingHex && targetIndex > 1) {
+				const fallbackHex = line[targetIndex - 1];
+				if (fallbackHex?.isWalkable(target.size, target.id, true)) {
+					landingHex = fallbackHex;
+					landingIndex = targetIndex - 1;
+				}
+			}
 				const pulledHexes =
 					landingHex && landingIndex > -1 ? Math.max(0, targetIndex - landingIndex) : 0;
 				const movementDrain = Math.min(target.stats.movement, pulledHexes);
@@ -879,6 +888,13 @@ export default (G: Game) => {
 					if (typeof cleanup === 'function') {
 						setTimeout(cleanup, 500);
 					}
+				// Apply damage even when target can't move (e.g., at minimum range)
+				if (damageHexes > 0) {
+					target.takeDamage(
+						new Damage(ability.creature, { pierce: damageHexes }, damageHexes, [], G),
+					);
+				}
+
 					G.activeCreature.queryMove();
 					return;
 				}
