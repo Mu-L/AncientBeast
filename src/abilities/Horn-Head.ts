@@ -784,42 +784,47 @@ export default (G: Game) => {
 
 			activate: function (path, args) {
 				const ability = this;
-				const target = path.find((hex) => hex.creature)?.creature;
-				const queryDirection = args?.direction as Direction;
-				const direction = meatSickleAllDirections.includes(queryDirection)
-					? queryDirection
-					: getMeatSickleDirectionFromPath(G, this.creature, path);
+			const queryDirection = args?.direction as Direction;
+			const direction = meatSickleAllDirections.includes(queryDirection)
+				? queryDirection
+				: getMeatSickleDirectionFromPath(G, this.creature, path);
 
-				if (!target || direction === undefined) {
-					return;
-				}
+			if (direction === undefined) {
+				return;
+			}
 
-				ability.end(false, true);
+			const hexLineDirection = getMeatSickleHexLineDirection(
+				direction,
+				this.creature.player.flipped,
+			);
+			const line = G.grid.getHexLine(
+				getMeatSickleStartX(this.creature, direction),
+				this.creature.y,
+				hexLineDirection,
+				this.creature.player.flipped,
+			);
 
-				if (target.isDarkPriest() && target.hasCreaturePlayerGotPlasma()) {
-					target.takeDamage(new Damage(ability.creature, { slash: 1 }, 1, [], G));
-					G.activeCreature.queryMove();
-					return;
-				}
+			// Find target in line: skip caster's own hexes, find first moveable creature
+			const targetIndex = line.findIndex(
+				(hex, index) => index > 0 && hex.creature?.id !== this.creature.id && hex.creature?.stats.moveable,
+			);
 
-				const hexLineDirection = getMeatSickleHexLineDirection(
-					direction,
-					this.creature.player.flipped,
-				);
-				const line = G.grid.getHexLine(
-					getMeatSickleStartX(this.creature, direction),
-					this.creature.y,
-					hexLineDirection,
-					this.creature.player.flipped,
-				);
-				const targetIndex = line.findIndex(
-					(hex, index) => index > 0 && hex.creature?.id === target.id,
-				);
+			if (targetIndex < 1) {
+				G.activeCreature.queryMove();
+				return;
+			}
 
-				// Ensure valid state: target found in line and not out of range
-				if (targetIndex < 1) {
-					G.activeCreature.queryMove();
-					return;
+			const target = line[targetIndex].creature;
+
+			if (!target) {
+				G.activeCreature.queryMove();
+				return;
+			}
+
+			ability.end(false, true);
+
+			if (target.isDarkPriest() && target.hasCreaturePlayerGotPlasma()) {
+				target.takeDamage(new Damage(ability.creature, { slash: 1 }, 1, [], G));
 				}
 
 				const casterHookHex = line[0] ?? this.creature.hexagons[0];
@@ -834,7 +839,7 @@ export default (G: Game) => {
 				};
 
 				const { landingHex, landingIndex } =
-					targetIndex > 1
+					targetIndex >= 1
 						? getMeatSickleLanding(line, target, targetIndex)
 						: { landingHex: undefined, landingIndex: -1 };
 				const pulledHexes =
