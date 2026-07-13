@@ -914,7 +914,7 @@ export const unitData: UnitDataStructure = [
 				title: 'Meat Sickle',
 				desc: 'Hooks an inline foe up to 5 hexagons away, reeling it nearby or dragging it.',
 				info: '4 pierce damage per hexagon moved.',
-				upgrade: 'restricts movement abilities.',
+				upgrade: 'restrict movement abilities.',
 				damages: {
 					pierce: 4,
 				},
