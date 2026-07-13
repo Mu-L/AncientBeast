@@ -217,9 +217,21 @@ const getMeatSickleDirectionFromPath = (
 		return undefined;
 	}
 
-	return meatSickleAllDirections.find(
+	// Try to find direction where this hex is the first hex in the path
+	let direction = meatSickleAllDirections.find(
 		(direction) => getMeatSicklePath(G, creature, direction, 1)[0]?.pos === firstHex.pos,
 	);
+
+	// If not found (e.g., clicking empty hex in middle of range), try to find the direction
+	// where this hex appears anywhere in the path
+	if (!direction) {
+		direction = meatSickleAllDirections.find((dir) => {
+			const pathForDir = getMeatSicklePath(G, creature, dir, 5);
+			return pathForDir.some((hex) => hex.pos === firstHex.pos);
+		});
+	}
+
+	return direction;
 };
 
 const uniqueHexes = (hexes: Hex[]) => {
