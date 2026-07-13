@@ -331,24 +331,43 @@ export default (G: Game) => {
 				const ability = this;
 				const crea = this.creature;
 
-				// var inRangeCreatures = crea.hexagons[1].adjacentHex(1);
-
 				const range = crea.adjacentHexes(1);
+
+				const showOutlinedArea = function () {
+					range.forEach(function (hex) {
+						hex.cleanOverlayVisualState('hover selected reachable weakDmg moveto ownCreatureHexShade h_player0 h_player1 h_player2 h_player3');
+						hex.cleanDisplayVisualState('adj dashed shrunken creature player0 player1 player2 player3');
+						if (hex.creature instanceof Creature && hex.creature.id !== crea.id) {
+							hex.overlayVisualState('hover h_player' + hex.creature.team);
+						}
+					});
+				};
+
+				const showFilledArea = function () {
+					range.forEach(function (hex) {
+						hex.cleanOverlayVisualState('hover selected reachable weakDmg moveto ownCreatureHexShade h_player0 h_player1 h_player2 h_player3');
+						hex.cleanDisplayVisualState('adj dashed shrunken creature player0 player1 player2 player3');
+						if (hex.creature instanceof Creature && hex.creature.id !== crea.id) {
+							hex.displayVisualState('creature player' + hex.creature.team);
+						} else {
+							hex.displayVisualState('adj');
+						}
+					});
+				};
 
 				G.grid.queryHexes({
 					fnOnConfirm: function (...args) {
 						ability.animation(...args);
 					},
-					fnOnSelect: function (hex) {
-						range.forEach(function (item) {
-							item.cleanOverlayVisualState();
-							item.overlayVisualState('creature selected player' + G.activeCreature.team);
-						});
-						hex.cleanOverlayVisualState();
-						hex.overlayVisualState('creature selected player' + G.activeCreature.team);
+					fnOnSelect: function () {
+						showFilledArea();
 					},
+					fnOnHoverOutside: showOutlinedArea,
+					callbackAfterQueryHexes: showOutlinedArea,
 					id: this.creature.id,
 					hexes: range,
+					targeting: false,
+					fillHexOnHover: false,
 					hideNonTarget: true,
 				});
 			},
