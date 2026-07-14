@@ -333,7 +333,10 @@ export default (G: Game) => {
 
 				const range = crea.adjacentHexes(1);
 
-				const showOutlinedArea = function () {
+				// Default/idle state (before hovering, or hovering outside the blast):
+				// target units keep their colored hex_hover_pX outline, empty hexes
+				// stay plain hex.png (no path underlay).
+				const showDefaultArea = function () {
 					range.forEach(function (hex) {
 						hex.cleanOverlayVisualState('hover selected reachable weakDmg moveto ownCreatureHexShade h_player0 h_player1 h_player2 h_player3');
 						hex.cleanDisplayVisualState('adj dashed shrunken creature player0 player1 player2 player3');
@@ -343,12 +346,16 @@ export default (G: Game) => {
 					});
 				};
 
-				const showFilledArea = function () {
+				// Hovered state: colored hex_hover_pX outline for units caught in the
+				// blast, with hex_path rendered underneath (handled automatically by
+				// Hex.updateStyle() once the overlay carries the hover+team classes).
+				// Empty hexes in the blast also get the hex_path underlay.
+				const showOutlinedArea = function () {
 					range.forEach(function (hex) {
 						hex.cleanOverlayVisualState('hover selected reachable weakDmg moveto ownCreatureHexShade h_player0 h_player1 h_player2 h_player3');
 						hex.cleanDisplayVisualState('adj dashed shrunken creature player0 player1 player2 player3');
 						if (hex.creature instanceof Creature && hex.creature.id !== crea.id) {
-							hex.displayVisualState('creature player' + hex.creature.team);
+							hex.overlayVisualState('hover h_player' + hex.creature.team);
 						} else {
 							hex.displayVisualState('adj');
 						}
@@ -359,11 +366,9 @@ export default (G: Game) => {
 					fnOnConfirm: function (...args) {
 						ability.animation(...args);
 					},
-					fnOnSelect: function () {
-						showFilledArea();
-					},
-					fnOnHoverOutside: showOutlinedArea,
-					callbackAfterQueryHexes: showOutlinedArea,
+					fnOnSelect: showOutlinedArea,
+					fnOnHoverOutside: showDefaultArea,
+					callbackAfterQueryHexes: showDefaultArea,
 					id: this.creature.id,
 					hexes: range,
 					targeting: false,
