@@ -8,17 +8,44 @@ import { getDirectionFromDelta } from '../utility/position';
 import { isTeam, Team } from '../utility/team';
 import { HEX_WIDTH_PX } from '../utility/const';
 
-const getFrontLanes = (creature: Creature) => [
-	...creature.getHexMap(matrices.fronttop1hex, false),
-	...creature.getHexMap(matrices.inlinefront1hex, false),
-	...creature.getHexMap(matrices.frontbottom1hex, false),
-];
+const getDualSwipeChoiceFromAnchor = (G: Game, anchor: Hex, directions: Direction[]) =>
+	directions
+		.map((direction) => G.grid.getHexLine(anchor.x, anchor.y, direction, false)[1])
+		.filter((hex): hex is Hex => Boolean(hex));
 
-const getBackLanes = (creature: Creature) => [
-	...creature.getHexMap(matrices.backtop1hex, false),
-	...creature.getHexMap(matrices.inlineback1hex, false),
-	...creature.getHexMap(matrices.backbottom1hex, false),
-];
+const getDualSwipeChoices = (G: Game, creature: Creature): [Hex[], Hex[]] => {
+	const occupiedHexes = [...creature.hexagons].sort((a, b) => a.x - b.x || a.y - b.y);
+	if (occupiedHexes.length === 0) {
+		return [[], []];
+	}
+
+	const leftAnchor = occupiedHexes[0];
+	const rightAnchor = occupiedHexes[occupiedHexes.length - 1];
+
+	const leftChoice = getDualSwipeChoiceFromAnchor(G, leftAnchor, [
+		Direction.UpLeft,
+		Direction.Left,
+		Direction.DownLeft,
+	]);
+	const rightChoice = getDualSwipeChoiceFromAnchor(G, rightAnchor, [
+		Direction.UpRight,
+		Direction.Right,
+		Direction.DownRight,
+	]);
+
+	return [leftChoice, rightChoice];
+};
+
+const getDualSwipeViableChoices = (creature: Creature, targetTeam: Team, choices: [Hex[], Hex[]]) =>
+	choices.filter((choice) =>
+		choice.some((hex) => {
+			const target = hex.creature;
+			return Boolean(target && target.id !== creature.id && isTeam(creature, target, targetTeam));
+		}),
+	);
+
+const getDualSwipeHoverRangeHexes = (allChoices: [Hex[], Hex[]], viableChoices: Hex[][]) =>
+	viableChoices.length > 0 ? viableChoices.flat() : allChoices.flat();
 
 const meatSickleRestrictionEffectName = 'Meat Sickle Restriction';
 const hornHeadLifeSupportTrackerEffectName = 'Life Support Damage Tracker';
@@ -83,8 +110,8 @@ const getMeatSicklePath = (G: Game, creature: Creature, direction: Direction, di
 };
 
 const getMeatSickleLanding = (line: Hex[], target: Creature, targetIndex: number) => {
-	// Search from index 1 to find closest walkable spot toward caster
-	const landingStartIndex = 1;
+	// Search from the first path hex to find closest walkable spot toward caster
+	const landingStartIndex = 0;
 
 	for (let index = landingStartIndex; index < targetIndex; index++) {
 		const hex = line[index];
@@ -97,14 +124,7 @@ const getMeatSickleLanding = (line: Hex[], target: Creature, targetIndex: number
 };
 
 const getUpgradedMeatSickleChoices = (G: Game, creature: Creature) =>
-	meatSickleAllDirections.map((direction) =>
-		getMeatSicklePath(
-			G,
-			creature,
-			direction,
-			meatSickleInlineDirections.includes(direction) ? 5 : 1,
-		),
-	);
+	meatSickleInlineDirections.map((direction) => getMeatSicklePath(G, creature, direction, 5));
 
 const getKnuckleNibPushDistance = (target: Creature) => Math.max(0, 4 - target.size);
 
@@ -177,14 +197,9 @@ const getKnuckleNibPushPreviewHexes = (G: Game, source: Creature, target: Creatu
 };
 
 const getUpgradedMeatSickleTargetChoices = (G: Game, creature: Creature, targetTeam: Team) =>
-	meatSickleAllDirections
+	meatSickleInlineDirections
 		.map((direction) => {
-			const path = getMeatSicklePath(
-				G,
-				creature,
-				direction,
-				meatSickleInlineDirections.includes(direction) ? 5 : 1,
-			);
+			const path = getMeatSicklePath(G, creature, direction, 5);
 
 			for (let i = 0; i < path.length; i++) {
 				const blockingCreature = path[i].creature;
@@ -218,14 +233,14 @@ const getMeatSickleDirectionFromPath = (
 	}
 
 	// Try to find direction where this hex is the first hex in the path
-	let direction = meatSickleAllDirections.find(
+	let direction = meatSickleInlineDirections.find(
 		(direction) => getMeatSicklePath(G, creature, direction, 1)[0]?.pos === firstHex.pos,
 	);
 
 	// If not found (e.g., clicking empty hex in middle of range), try to find the direction
 	// where this hex appears anywhere in the path
 	if (!direction) {
-		direction = meatSickleAllDirections.find((dir) => {
+		direction = meatSickleInlineDirections.find((dir) => {
 			const pathForDir = getMeatSicklePath(G, creature, dir, 5);
 			return pathForDir.some((hex) => hex.pos === firstHex.pos);
 		});
@@ -603,6 +618,7 @@ export default (G: Game) => {
 		},
 		{
 			trigger: 'onQuery',
+			showHoverPreviewRange: true,
 
 			_targetTeam: Team.Enemy,
 
@@ -779,68 +795,90 @@ export default (G: Game) => {
 					return;
 				}
 
+				const allChoices = getUpgradedMeatSickleChoices(G, this.creature);
 				const choices = getUpgradedMeatSickleTargetChoices(G, this.creature, this._targetTeam);
+				const showOutlinedChoices = (choiceSets: Hex[][]) => {
+					const outlinedHexes = uniqueHexes(choiceSets.flat());
+					outlinedHexes.forEach((hex: Hex) => {
+						hex.cleanOverlayVisualState();
+						hex.cleanDisplayVisualState('dashed');
+						hex.displayVisualState('dashed');
+					});
+				};
+				const fillHoveredChoice = (choice: Hex[]) => {
+					showOutlinedChoices(allChoices);
+					choice.forEach((hex: Hex) => {
+						hex.cleanDisplayVisualState('dashed');
+						if (hex.creature instanceof Creature) {
+							hex.displayVisualState('creature selected player' + hex.creature.team);
+						} else {
+							hex.overlayVisualState('reachable h_player' + G.activeCreature.team);
+						}
+					});
+				};
 
 				G.grid.queryChoice({
 					fnOnConfirm: function () {
 						// eslint-disable-next-line prefer-rest-params
 						ability.animation(...arguments);
 					},
+					fnOnSelect: function (choice: Hex[]) {
+						fillHoveredChoice(choice);
+					},
 					team: Team.Both,
 					requireCreature: 0,
 					id: this.creature.id,
 					flipped: this.creature.player.flipped,
 					choices,
+					targeting: false,
+					callbackAfterQueryHexes: function () {
+						showOutlinedChoices(allChoices);
+					},
 				});
 			},
 
 			activate: function (path, args) {
 				const ability = this;
-			const queryDirection = args?.direction as Direction;
-			const direction = meatSickleAllDirections.includes(queryDirection)
-				? queryDirection
-				: getMeatSickleDirectionFromPath(G, this.creature, path);
+				const queryDirection = args?.direction as Direction;
+				const direction = meatSickleAllDirections.includes(queryDirection)
+					? queryDirection
+					: getMeatSickleDirectionFromPath(G, this.creature, path);
 
-			if (direction === undefined) {
-				return;
-			}
-
-			const hexLineDirection = getMeatSickleHexLineDirection(
-				direction,
-				this.creature.player.flipped,
-			);
-			const line = G.grid.getHexLine(
-				getMeatSickleStartX(this.creature, direction),
-				this.creature.y,
-				hexLineDirection,
-				this.creature.player.flipped,
-			);
-
-			// Find target in line: skip caster's own hexes, find first moveable creature
-			const targetIndex = line.findIndex(
-				(hex, index) => index > 0 && hex.creature?.id !== this.creature.id && hex.creature?.stats.moveable,
-			);
-
-			if (targetIndex < 1) {
-				G.activeCreature.queryMove();
-				return;
-			}
-
-			const target = line[targetIndex].creature;
-
-			if (!target) {
-				G.activeCreature.queryMove();
-				return;
-			}
-
-			ability.end(false, true);
-
-			if (target.isDarkPriest() && target.hasCreaturePlayerGotPlasma()) {
-				target.takeDamage(new Damage(ability.creature, { slash: 1 }, 1, [], G));
+				if (direction === undefined) {
+					return;
 				}
 
-				const casterHookHex = line[0] ?? this.creature.hexagons[0];
-				const targetHookHex = line[targetIndex] ?? target.hexagons[0];
+				const line = getMeatSicklePath(G, this.creature, direction, 5);
+
+				// Find target in line: first moveable enemy in the inline path
+				const targetIndex = line.findIndex(
+					(hex) =>
+						Boolean(hex) &&
+						hex.creature?.id !== this.creature.id &&
+						hex.creature?.stats?.moveable,
+				);
+
+				if (targetIndex < 0) {
+					G.activeCreature.queryMove();
+					return;
+				}
+
+				const target = line[targetIndex].creature;
+
+				if (!target) {
+					G.activeCreature.queryMove();
+					return;
+				}
+
+				ability.end(false, true);
+
+				if (target.isDarkPriest() && target.hasCreaturePlayerGotPlasma()) {
+					target.takeDamage(new Damage(ability.creature, { slash: 1 }, 1, [], G));
+				}
+
+				const targetHookHex = line[targetIndex] ?? target.hexagons?.[0] ?? line[0];
+				const casterHookHex =
+					this.creature.hexagons?.[0] ?? line[0] ?? target.hexagons?.[0] ?? targetHookHex;
 				let cleanupMeatSickleEffect: (() => void) | null = null;
 
 				const teardownMeatSickleEffect = () => {
@@ -851,24 +889,24 @@ export default (G: Game) => {
 				};
 
 				let { landingHex, landingIndex } =
-					targetIndex >= 1
+					targetIndex >= 0
 						? getMeatSickleLanding(line, target, targetIndex)
 						: { landingHex: undefined, landingIndex: -1 };
 
-			// If no valid landing hex found, try the hex immediately before target (if walkable)
-			if (!landingHex && targetIndex > 1) {
-				const fallbackHex = line[targetIndex - 1];
-				if (fallbackHex?.isWalkable(target.size, target.id, true)) {
-					landingHex = fallbackHex;
-					landingIndex = targetIndex - 1;
+				// If no valid landing hex found, try the hex immediately before target (if walkable)
+				if (!landingHex && targetIndex > 0) {
+					const fallbackHex = line[targetIndex - 1];
+					if (fallbackHex?.isWalkable(target.size, target.id, true)) {
+						landingHex = fallbackHex;
+						landingIndex = targetIndex - 1;
+					}
 				}
-			}
 				const pulledHexes =
 					landingHex && landingIndex > -1 ? Math.max(0, targetIndex - landingIndex) : 0;
 				const movementDrain = Math.min(target.stats.movement, pulledHexes);
 				const damageHexes = Math.max(0, pulledHexes - movementDrain);
 
-				if (this.isUpgraded() && targetIndex === 1) {
+				if (this.isUpgraded() && targetIndex === 0) {
 					const cleanup = playMeatSickleHookEffect(
 						G,
 						this.creature,
@@ -900,12 +938,12 @@ export default (G: Game) => {
 					if (typeof cleanup === 'function') {
 						setTimeout(cleanup, 500);
 					}
-				// Apply damage even when target can't move (e.g., at minimum range)
-				if (damageHexes > 0) {
-					target.takeDamage(
-						new Damage(ability.creature, { pierce: damageHexes }, damageHexes, [], G),
-					);
-				}
+					// Apply damage even when target can't move (e.g., at minimum range)
+					if (damageHexes > 0) {
+						target.takeDamage(
+							new Damage(ability.creature, { pierce: damageHexes }, damageHexes, [], G),
+						);
+					}
 
 					G.activeCreature.queryMove();
 					return;
@@ -991,9 +1029,13 @@ export default (G: Game) => {
 					return false;
 				}
 
-				const frontChoice = getFrontLanes(this.creature);
-				const backChoice = getBackLanes(this.creature);
-				const rangeHexes = [...frontChoice, ...backChoice];
+				const dualSwipeChoices = getDualSwipeChoices(G, this.creature);
+				const viableChoices = getDualSwipeViableChoices(
+					this.creature,
+					this._targetTeam,
+					dualSwipeChoices,
+				);
+				const rangeHexes = getDualSwipeHoverRangeHexes(dualSwipeChoices, viableChoices);
 				const ownHexPositions = new Set(
 					this.creature.hexagons.map((hex: Hex) => `${hex.x}:${hex.y}`),
 				);
@@ -1001,10 +1043,7 @@ export default (G: Game) => {
 					rangeHexes.filter((hex) => !ownHexPositions.has(`${hex.x}:${hex.y}`)),
 				);
 				return preserveAbilityRangeHexes(this, hoverRangeHexes, () => {
-					if (
-						this.atLeastOneTarget(frontChoice, { team: this._targetTeam }) ||
-						this.atLeastOneTarget(backChoice, { team: this._targetTeam })
-					) {
+					if (viableChoices.length > 0) {
 						this.message = '';
 						return true;
 					}
@@ -1016,32 +1055,47 @@ export default (G: Game) => {
 
 			query: function () {
 				const ability = this;
-				const frontChoice = getFrontLanes(this.creature);
-				const backChoice = getBackLanes(this.creature);
+				const dualSwipeChoices = getDualSwipeChoices(G, this.creature);
+				const viableChoices = getDualSwipeViableChoices(
+					this.creature,
+					this._targetTeam,
+					dualSwipeChoices,
+				);
+				if (!viableChoices.length) {
+					G.activeCreature.queryMove();
+					return;
+				}
 				const showOutlinedChoices = (choices: Hex[][]) => {
 					const allChoiceHexes = choices.reduce(
 						(acc: Hex[], choice: Hex[]) => acc.concat(choice),
 						[],
 					);
 					allChoiceHexes.forEach((hex: Hex) => {
-						hex.cleanOverlayVisualState();
-						hex.cleanDisplayVisualState('dashed');
-						hex.displayVisualState('dashed');
+						hex.cleanOverlayVisualState(
+							'reachable weakDmg moveto selected hover ownCreatureHexShade h_player0 h_player1 h_player2 h_player3',
+						);
+						hex.cleanDisplayVisualState('adj creature player0 player1 player2 player3 dashed');
+						if (hex.creature instanceof Creature) {
+							hex.overlayVisualState('hover h_player' + hex.creature.team);
+						}
 					});
 				};
 				const fillHoveredChoice = (choice: Hex[]) => {
-					showOutlinedChoices([frontChoice, backChoice]);
+					showOutlinedChoices(viableChoices);
 					choice.forEach((hex: Hex) => {
-						hex.cleanDisplayVisualState('dashed');
+						hex.cleanOverlayVisualState(
+							'reachable weakDmg moveto selected hover ownCreatureHexShade h_player0 h_player1 h_player2 h_player3',
+						);
+						hex.cleanDisplayVisualState('adj creature player0 player1 player2 player3 dashed');
 						if (hex.creature instanceof Creature) {
 							hex.displayVisualState('creature selected player' + hex.creature.team);
 						} else {
-							hex.overlayVisualState('reachable h_player' + G.activeCreature.team);
+							hex.displayVisualState('adj');
 						}
 					});
 				};
 
-				const choices = [frontChoice, backChoice];
+				const choices = viableChoices;
 
 				G.grid.queryChoice({
 					fnOnConfirm: function (...args) {
@@ -1049,6 +1103,9 @@ export default (G: Game) => {
 					},
 					fnOnSelect: function (choice: Hex[]) {
 						fillHoveredChoice(choice);
+					},
+					fnOnHoverOutside: function () {
+						showOutlinedChoices(choices);
 					},
 					team: Team.Both,
 					requireCreature: 0,
@@ -1064,12 +1121,22 @@ export default (G: Game) => {
 
 			activate: function (targetHexes: Hex[]) {
 				const ability = this;
-				const frontLanes = getFrontLanes(this.creature);
-				const backLanes = getBackLanes(this.creature);
-				const isBackSwipe = backLanes.some((laneHex) =>
-					targetHexes.some((selectedHex) => selectedHex.pos === laneHex.pos),
+				const dualSwipeChoices = getDualSwipeChoices(G, this.creature);
+				const viableChoices = getDualSwipeViableChoices(
+					this.creature,
+					this._targetTeam,
+					dualSwipeChoices,
 				);
-				const laneHexes = isBackSwipe ? backLanes : frontLanes;
+				const laneHexes = viableChoices.find((choice) =>
+					choice.some((laneHex) =>
+						targetHexes.some((selectedHex) => selectedHex.pos === laneHex.pos),
+					),
+				);
+
+				if (!laneHexes) {
+					G.activeCreature.queryMove();
+					return;
+				}
 
 				const getUniqueEnemyTargets = (hexes: Hex[]) => {
 					const hitIds = new Set<number>();
