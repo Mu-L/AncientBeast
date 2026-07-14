@@ -50,27 +50,12 @@ const getDualSwipeHoverRangeHexes = (allChoices: [Hex[], Hex[]], viableChoices: 
 const meatSickleRestrictionEffectName = 'Meat Sickle Restriction';
 const hornHeadLifeSupportTrackerEffectName = 'Life Support Damage Tracker';
 const meatSickleInlineDirections = [Direction.Right, Direction.Left];
-const meatSickleAllDirections = [
-	Direction.UpRight,
-	Direction.Right,
-	Direction.DownRight,
-	Direction.DownLeft,
-	Direction.Left,
-	Direction.UpLeft,
-];
+type MeatSickleChoice = Hex[] & { meatSickleDirection?: Direction };
 
-const getMeatSickleHexLineDirection = (direction: Direction, flipped: boolean) => {
-	if (flipped) {
-		switch (direction) {
-			case Direction.Left:
-				return Direction.Right;
-			case Direction.UpLeft:
-				return Direction.DownRight;
-			case Direction.DownLeft:
-				return Direction.UpRight;
-		}
-	}
-	return direction;
+const asMeatSickleChoice = (hexes: Hex[], direction: Direction): MeatSickleChoice => {
+	const choice = [...hexes] as MeatSickleChoice;
+	choice.meatSickleDirection = direction;
+	return choice;
 };
 
 const getMeatSickleStartX = (creature: Creature, direction: Direction) => {
@@ -85,11 +70,17 @@ const getMeatSickleStartX = (creature: Creature, direction: Direction) => {
 };
 
 const getMeatSicklePath = (G: Game, creature: Creature, direction: Direction, distance: number) => {
-	const hexLineDirection = getMeatSickleHexLineDirection(direction, creature.player.flipped);
+	// HexGrid.getHexLine already inverts its own `flipped` handling for
+	// Direction.Left internally, so Direction.Left/Direction.Right resolve to
+	// the correct "backward"/"forward" side for a flipped creature without any
+	// extra remapping here. Remapping Left -> Right for flipped creatures (as
+	// this used to do) canceled out that built-in correction and made the
+	// "backward" query resolve to the exact same line as "forward" — a flipped
+	// (blue) Horn Head could never hit anything actually behind it.
 	const rawLine = G.grid.getHexLine(
 		getMeatSickleStartX(creature, direction),
 		creature.y,
-		hexLineDirection,
+		direction,
 		creature.player.flipped,
 	);
 	// Skip any of the caster's own hexagons at the very start of the line so the
@@ -112,8 +103,9 @@ const getMeatSicklePath = (G: Game, creature: Creature, direction: Direction, di
 const getMeatSickleLanding = (line: Hex[], target: Creature, targetIndex: number) => {
 	// Search from the first path hex to find closest walkable spot toward caster
 	const landingStartIndex = 0;
+	const landingEndIndex = target.size > 1 && targetIndex === 1 ? targetIndex : targetIndex - 1;
 
-	for (let index = landingStartIndex; index < targetIndex; index++) {
+	for (let index = landingStartIndex; index <= landingEndIndex; index++) {
 		const hex = line[index];
 		if (hex?.isWalkable(target.size, target.id, true)) {
 			return { landingHex: hex, landingIndex: index };
@@ -125,6 +117,73 @@ const getMeatSickleLanding = (line: Hex[], target: Creature, targetIndex: number
 
 const getUpgradedMeatSickleChoices = (G: Game, creature: Creature) =>
 	meatSickleInlineDirections.map((direction) => getMeatSicklePath(G, creature, direction, 5));
+
+const getMeatSickleDirectionMask = (direction: Direction) => {
+	const directions = [0, 0, 0, 0, 0, 0];
+	directions[direction] = 1;
+	return directions;
+};
+
+const getMeatSickleChoiceDataForDirection = (
+	G: Game,
+	creature: Creature,
+	targetTeam: Team,
+	direction: Direction,
+	requireCreature: boolean,
+) =>
+	G.grid.getDirectionChoices({
+		team: targetTeam,
+		requireCreature,
+		id: creature.id,
+		sourceCreature: creature,
+		flipped: creature.player.flipped,
+		x: creature.x,
+		y: creature.y,
+		directions: getMeatSickleDirectionMask(direction),
+		distance: 5,
+		minDistance: 1,
+		includeCreature: true,
+		stopOnCreature: true,
+		optTest: (candidate: Creature) => candidate.stats.moveable,
+	});
+
+const getMeatSickleQueryChoiceData = (
+	G: Game,
+	creature: Creature,
+	targetTeam: Team,
+	requireCreature: boolean,
+	) => {
+	if (typeof G.grid.getDirectionChoices !== 'function') {
+		const fallbackChoices = requireCreature
+			? getUpgradedMeatSickleTargetChoices(G, creature, targetTeam)
+			: getMeatSickleQueryChoices(G, creature, targetTeam);
+		return meatSickleInlineDirections.map((direction, index) => ({
+			direction,
+			choice: asMeatSickleChoice(fallbackChoices[index] ?? [], direction),
+			hexesDashed: [],
+			hexesDeadZone: [],
+			shrunkenHexes: [],
+		}));
+	}
+
+	return meatSickleInlineDirections.map((direction) => {
+		const choiceData = getMeatSickleChoiceDataForDirection(
+			G,
+			creature,
+			targetTeam,
+			direction,
+			requireCreature,
+		);
+		const choice = choiceData.choices[0] ?? [];
+		return {
+			direction,
+			choice: asMeatSickleChoice(choice, direction),
+			hexesDashed: choiceData.hexesDashed ?? [],
+			hexesDeadZone: choiceData.hexesDeadZone ?? [],
+			shrunkenHexes: choiceData.shrunkenHexes ?? [],
+		};
+	});
+};
 
 const getKnuckleNibPushDistance = (target: Creature) => Math.max(0, 4 - target.size);
 
@@ -208,7 +267,11 @@ const getUpgradedMeatSickleTargetChoices = (G: Game, creature: Creature, targetT
 				}
 
 				if (isTeam(creature, blockingCreature, targetTeam) && blockingCreature.stats.moveable) {
-					return path.slice(0, i + 1);
+					const targetHexes = (blockingCreature.hexagons ?? []).filter(Boolean);
+					return asMeatSickleChoice(
+						uniqueHexes(path.slice(0, i + 1).concat(targetHexes)),
+						direction,
+					);
 				}
 
 				return undefined;
@@ -218,6 +281,30 @@ const getUpgradedMeatSickleTargetChoices = (G: Game, creature: Creature, targetT
 		})
 		.filter((choice): choice is Hex[] => Array.isArray(choice));
 
+const getMeatSickleQueryChoices = (G: Game, creature: Creature, targetTeam: Team) =>
+	meatSickleInlineDirections.map((direction) => {
+		const path = getMeatSicklePath(G, creature, direction, 5);
+
+		for (let i = 0; i < path.length; i++) {
+			const blockingCreature = path[i].creature;
+			if (!blockingCreature) {
+				continue;
+			}
+
+			if (isTeam(creature, blockingCreature, targetTeam) && blockingCreature.stats.moveable) {
+				const targetHexes = (blockingCreature.hexagons ?? []).filter(Boolean);
+				return asMeatSickleChoice(
+					uniqueHexes(path.slice(0, i + 1).concat(targetHexes)),
+					direction,
+				);
+			}
+
+			return asMeatSickleChoice(path.slice(0, i + 1), direction);
+		}
+
+		return asMeatSickleChoice(path, direction);
+	});
+
 const hornHeadHealthBeforeHit = new Map<number, number>();
 const hornHeadPredictedHitDamage = new Map<number, number>();
 
@@ -225,16 +312,19 @@ const getMeatSickleDirectionFromPath = (
 	G: Game,
 	creature: Creature,
 	path: Hex[],
+	clickedHex?: Hex,
 ): Direction | undefined => {
-	const firstHex = path[0];
+	const probeHex = path[0] ?? clickedHex;
 
-	if (!firstHex) {
+	if (!probeHex) {
 		return undefined;
 	}
 
+	const sameHex = (a?: Hex, b?: Hex) => Boolean(a && b && a.x === b.x && a.y === b.y);
+
 	// Try to find direction where this hex is the first hex in the path
 	let direction = meatSickleInlineDirections.find(
-		(direction) => getMeatSicklePath(G, creature, direction, 1)[0]?.pos === firstHex.pos,
+		(direction) => sameHex(getMeatSicklePath(G, creature, direction, 1)[0], probeHex),
 	);
 
 	// If not found (e.g., clicking empty hex in middle of range), try to find the direction
@@ -242,7 +332,7 @@ const getMeatSickleDirectionFromPath = (
 	if (!direction) {
 		direction = meatSickleInlineDirections.find((dir) => {
 			const pathForDir = getMeatSicklePath(G, creature, dir, 5);
-			return pathForDir.some((hex) => hex.pos === firstHex.pos);
+			return pathForDir.some((hex) => sameHex(hex, probeHex));
 		});
 	}
 
@@ -262,6 +352,17 @@ const uniqueHexes = (hexes: Hex[]) => {
 		seenPositions.add(positionKey);
 		return true;
 	});
+};
+
+const getMeatSickleDirectionLabel = (direction: Direction) => {
+	switch (direction) {
+		case Direction.Left:
+			return 'backward';
+		case Direction.Right:
+			return 'forward';
+		default:
+			return 'inline';
+	}
 };
 
 const preserveAbilityRangeHexes = (
@@ -371,7 +472,7 @@ const playMeatSickleHookEffect = (
 			// The sprite is mirrored when the creature is flipped, so the wrist
 			// pixel (measured from the image's left edge) is mirrored too — the
 			// emit point must come from the side the creature is actually facing.
-			const flipped = sourceCreature.player.flipped;
+			const flipped = sourceSprite.scale.x < 0;
 			const launchPixelX = flipped
 				? sourceSprite.texture.width - MEAT_SICKLE_LAUNCH_PIXEL_X
 				: MEAT_SICKLE_LAUNCH_PIXEL_X;
@@ -730,7 +831,7 @@ export default (G: Game) => {
 			_targetTeam: Team.Enemy,
 
 			_getMaxDistance: function () {
-				return this.isUpgraded() ? 1 : 2;
+				return 1;
 			},
 
 			require: function () {
@@ -743,24 +844,21 @@ export default (G: Game) => {
 					return false;
 				}
 
-				if (!this.isUpgraded()) {
-					return this.testDirection({
-						team: this._targetTeam,
-						sourceCreature: this.creature,
-						flipped: this.creature.player.flipped,
-						directions: [0, 1, 0, 0, 1, 0],
-						distance: 5,
-						minDistance: this._getMaxDistance(),
-						optTest: (creature: Creature) => creature.stats.moveable,
-					});
-				}
-
-				const choices = getUpgradedMeatSickleChoices(G, this.creature);
-				const targetChoices = getUpgradedMeatSickleTargetChoices(
+				const targetChoiceData = getMeatSickleQueryChoiceData(
 					G,
 					this.creature,
 					this._targetTeam,
+					true,
 				);
+				const choices = getMeatSickleQueryChoiceData(
+					G,
+					this.creature,
+					this._targetTeam,
+					false,
+				).map((entry) => entry.choice);
+				const targetChoices = targetChoiceData
+					.map((entry) => entry.choice)
+					.filter((choice) => choice.length > 0);
 
 				return preserveAbilityRangeHexes(this, choices.flat(), () => {
 					if (targetChoices.length > 0) {
@@ -776,60 +874,69 @@ export default (G: Game) => {
 			query: function () {
 				const ability = this;
 
-				if (!this.isUpgraded()) {
-					G.grid.queryDirection({
-						fnOnConfirm: function (...args) {
-							ability.animation(...args);
-						},
-						team: this._targetTeam,
-						id: this.creature.id,
-						sourceCreature: this.creature,
-						flipped: this.creature.player.flipped,
-						x: this.creature.x,
-						y: this.creature.y,
-						directions: [0, 1, 0, 0, 1, 0],
-						distance: 5,
-						minDistance: this._getMaxDistance(),
-						optTest: (creature: Creature) => creature.stats.moveable,
-					});
-					return;
-				}
-
-				const allChoices = getUpgradedMeatSickleChoices(G, this.creature);
-				const choices = getUpgradedMeatSickleTargetChoices(G, this.creature, this._targetTeam);
+				const allChoiceData = getMeatSickleQueryChoiceData(
+					G,
+					this.creature,
+					this._targetTeam,
+					false,
+				);
+				const targetChoiceData = getMeatSickleQueryChoiceData(
+					G,
+					this.creature,
+					this._targetTeam,
+					true,
+				);
+				const allChoices = allChoiceData.map((entry) => entry.choice);
+				const choices = targetChoiceData
+					.map((entry) => entry.choice)
+					.filter((choice) => choice.length > 0);
+				const dashedHexes = uniqueHexes(allChoiceData.flatMap((entry) => entry.hexesDashed));
+				const deadZoneHexes = uniqueHexes(allChoiceData.flatMap((entry) => entry.hexesDeadZone));
+				const shrunkenHexes = uniqueHexes(allChoiceData.flatMap((entry) => entry.shrunkenHexes));
 				const showOutlinedChoices = (choiceSets: Hex[][]) => {
 					const outlinedHexes = uniqueHexes(choiceSets.flat());
 					outlinedHexes.forEach((hex: Hex) => {
 						hex.cleanOverlayVisualState();
-						hex.cleanDisplayVisualState('dashed');
-						hex.displayVisualState('dashed');
+						hex.cleanDisplayVisualState('adj creature selected player0 player1 player2 player3 dashed');
+						if (hex.creature instanceof Creature) {
+							hex.displayVisualState('creature player' + hex.creature.team);
+						}
 					});
 				};
 				const fillHoveredChoice = (choice: Hex[]) => {
 					showOutlinedChoices(allChoices);
 					choice.forEach((hex: Hex) => {
-						hex.cleanDisplayVisualState('dashed');
+						hex.cleanOverlayVisualState();
+						hex.cleanDisplayVisualState('adj creature selected player0 player1 player2 player3 dashed');
 						if (hex.creature instanceof Creature) {
-							hex.displayVisualState('creature selected player' + hex.creature.team);
+							hex.overlayVisualState('hover h_player' + hex.creature.team);
 						} else {
-							hex.overlayVisualState('reachable h_player' + G.activeCreature.team);
+							hex.displayVisualState('adj');
 						}
 					});
 				};
 
 				G.grid.queryChoice({
-					fnOnConfirm: function () {
-						// eslint-disable-next-line prefer-rest-params
-						ability.animation(...arguments);
+					fnOnConfirm: function (choice: MeatSickleChoice, confirmArgs) {
+						if (choice.meatSickleDirection !== undefined) {
+							confirmArgs.direction = choice.meatSickleDirection;
+						}
+						ability.animation(choice, confirmArgs);
 					},
 					fnOnSelect: function (choice: Hex[]) {
 						fillHoveredChoice(choice);
+					},
+					fnOnHoverOutside: function () {
+						showOutlinedChoices(allChoices);
 					},
 					team: Team.Both,
 					requireCreature: 0,
 					id: this.creature.id,
 					flipped: this.creature.player.flipped,
 					choices,
+					hexesDashed: dashedHexes,
+					hexesDeadZone: deadZoneHexes,
+					shrunkenHexes,
 					targeting: false,
 					callbackAfterQueryHexes: function () {
 						showOutlinedChoices(allChoices);
@@ -840,23 +947,48 @@ export default (G: Game) => {
 			activate: function (path, args) {
 				const ability = this;
 				const queryDirection = args?.direction as Direction;
-				const direction = meatSickleAllDirections.includes(queryDirection)
-					? queryDirection
-					: getMeatSickleDirectionFromPath(G, this.creature, path);
+				const selectedHex = args?.hex as Hex | undefined;
+				const selectedPathHead = path?.[0] as Hex | undefined;
+				const sameHex = (a?: Hex, b?: Hex) => Boolean(a && b && a.x === b.x && a.y === b.y);
+				const directionFromPath = getMeatSickleDirectionFromPath(
+					G,
+					this.creature,
+					path,
+					selectedHex,
+				);
+				const direction = directionFromPath
+					?? (meatSickleInlineDirections.includes(queryDirection) ? queryDirection : undefined);
 
 				if (direction === undefined) {
 					return;
 				}
 
-				const line = getMeatSicklePath(G, this.creature, direction, 5);
+				const hasSelectionOnLine = (line: Hex[]) =>
+					(!selectedHex && !selectedPathHead) ||
+					line.some((hex) => sameHex(hex, selectedHex) || sameHex(hex, selectedPathHead));
 
-				// Find target in line: first moveable enemy in the inline path
-				const targetIndex = line.findIndex(
-					(hex) =>
-						Boolean(hex) &&
-						hex.creature?.id !== this.creature.id &&
-						hex.creature?.stats?.moveable,
-				);
+				const findTargetOnLine = (line: Hex[]) =>
+					line.findIndex(
+						(hex) =>
+							Boolean(hex) &&
+							hex.creature?.id !== this.creature.id &&
+							hex.creature?.stats?.moveable,
+					);
+
+				let line = getMeatSicklePath(G, this.creature, direction, 5);
+				let targetIndex = findTargetOnLine(line);
+
+				if (targetIndex < 0) {
+					const fallbackDirection = meatSickleInlineDirections.find((dir) => dir !== direction);
+					if (fallbackDirection !== undefined) {
+						const fallbackLine = getMeatSicklePath(G, this.creature, fallbackDirection, 5);
+						const fallbackTargetIndex = findTargetOnLine(fallbackLine);
+						if (fallbackTargetIndex > -1 && hasSelectionOnLine(fallbackLine)) {
+							line = fallbackLine;
+							targetIndex = fallbackTargetIndex;
+						}
+					}
+				}
 
 				if (targetIndex < 0) {
 					G.activeCreature.queryMove();
@@ -870,11 +1002,13 @@ export default (G: Game) => {
 					return;
 				}
 
-				ability.end(false, true);
+				ability.end(true, true);
 
 				if (target.isDarkPriest() && target.hasCreaturePlayerGotPlasma()) {
 					target.takeDamage(new Damage(ability.creature, { slash: 1 }, 1, [], G));
 				}
+
+				const directionLabel = getMeatSickleDirectionLabel(direction);
 
 				const targetHookHex = line[targetIndex] ?? target.hexagons?.[0] ?? line[0];
 				const casterHookHex =
@@ -902,29 +1036,14 @@ export default (G: Game) => {
 					}
 				}
 				const pulledHexes =
-					landingHex && landingIndex > -1 ? Math.max(0, targetIndex - landingIndex) : 0;
+					landingHex && landingIndex > -1
+						? Math.max(
+								0,
+								targetIndex - landingIndex + (landingIndex === targetIndex ? 1 : 0),
+							)
+						: 0;
 				const movementDrain = Math.min(target.stats.movement, pulledHexes);
 				const damageHexes = Math.max(0, pulledHexes - movementDrain);
-
-				if (this.isUpgraded() && targetIndex === 0) {
-					const cleanup = playMeatSickleHookEffect(
-						G,
-						this.creature,
-						casterHookHex,
-						target,
-						targetHookHex,
-						350,
-					);
-					if (typeof cleanup === 'function') {
-						setTimeout(cleanup, 500);
-					}
-					target.takeDamage(
-						new Damage(ability.creature, { pierce: ability.damages.pierce }, 1, [], G),
-					);
-					applyMovementRestriction(ability.creature, target, G);
-					G.activeCreature.queryMove();
-					return;
-				}
 
 				if (!landingHex) {
 					const cleanup = playMeatSickleHookEffect(
@@ -938,11 +1057,20 @@ export default (G: Game) => {
 					if (typeof cleanup === 'function') {
 						setTimeout(cleanup, 500);
 					}
-					// Apply damage even when target can't move (e.g., at minimum range)
-					if (damageHexes > 0) {
+					G.log(
+						`%CreatureName${ability.creature.id}% uses Meat Sickle ${directionLabel} on %CreatureName${target.id}% (${targetIndex === 0 ? 'melee hit' : 'no pull'})`,
+					);
+					// Apply direct hit damage at melee range; otherwise use pull-distance damage.
+					if (targetIndex === 0 || damageHexes > 0) {
+						const pierceDamage =
+							targetIndex === 0 ? ability.damages.pierce : damageHexes;
 						target.takeDamage(
-							new Damage(ability.creature, { pierce: damageHexes }, damageHexes, [], G),
+							new Damage(ability.creature, { pierce: pierceDamage }, 1, [], G),
 						);
+					}
+
+					if (ability.isUpgraded()) {
+						applyMovementRestriction(ability.creature, target, G);
 					}
 
 					G.activeCreature.queryMove();
@@ -961,6 +1089,9 @@ export default (G: Game) => {
 						targetHookHex,
 						350,
 						() => {
+							G.log(
+								`%CreatureName${ability.creature.id}% uses Meat Sickle ${directionLabel} on %CreatureName${target.id}% (pulled ${pulledHexes} hex${pulledHexes === 1 ? '' : 'es'})`,
+							);
 							target.moveTo(landingHex, {
 								ignoreMovementPoint: true,
 								ignorePath: true,
@@ -1011,6 +1142,10 @@ export default (G: Game) => {
 											),
 										);
 									}
+
+										if (ability.isUpgraded()) {
+											applyMovementRestriction(ability.creature, target, G);
+										}
 
 									G.activeCreature.queryMove();
 								},

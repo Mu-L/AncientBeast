@@ -504,3 +504,276 @@ describe('Horn Head Meat Sickle landing validation', () => {
 		);
 	});
 });
+
+const makeGame = () => {
+	const hexesByKey = new Map<string, any>();
+	const getHex = (x: number, y: number): any => {
+		const key = `${x}:${y}`;
+		if (!hexesByKey.has(key)) {
+			hexesByKey.set(key, {
+				x,
+				y,
+				pos: { x, y },
+				direction: Direction.None,
+				creature: null,
+				isWalkable: jest.fn(() => true),
+			});
+		}
+		return hexesByKey.get(key);
+	};
+
+	const game: any = {
+		abilities: {},
+		grid: {
+			getHexLine: jest.fn((startX: number, y: number, dir: Direction, flipped?: boolean) => {
+				if ((dir === Direction.Right || dir === Direction.Left) && y === 5) {
+					const step =
+						dir === Direction.Right
+							? flipped
+								? -1
+								: 1
+							: flipped
+								? 1
+								: -1;
+					const xs = [
+						startX,
+						startX + step,
+						startX + step * 2,
+						startX + step * 3,
+						startX + step * 4,
+						startX + step * 5,
+						startX + step * 6,
+						startX + step * 7,
+						startX + step * 8,
+					];
+					return xs.map((x: number) => getHex(x, 5));
+				}
+				return [];
+			}),
+			queryChoice: jest.fn(),
+			queryDirection: jest.fn(),
+		},
+		activeCreature: { queryMove: jest.fn() },
+		log: jest.fn(),
+		Phaser: undefined,
+		msg: { abilities: { noTarget: 'No target.' } },
+	};
+
+	loadHornHeadAbilities(game as never);
+	return { game, getHex };
+};
+
+const makeCreature = (id: number, x: number, y: number, size: number) => ({
+	id,
+	x,
+	y,
+	size,
+	player: { flipped: false },
+	hexagons: Array.from({ length: size }, (_, i) => ({ x: x - i, y })),
+	stats: { moveable: true, movement: 3 },
+	isDarkPriest: () => false,
+	hasCreaturePlayerGotPlasma: () => false,
+	takeDamage: jest.fn(),
+	moveTo: jest.fn((hex: any, opts: { callback?: () => void }) => opts?.callback?.()),
+	replaceEffect: jest.fn(),
+	addEffect: jest.fn(),
+	removeEffect: jest.fn(),
+	endurance: 5,
+});
+
+describe('Meat Sickle clicking the first hexagon of a path', () => {
+	let game: any;
+	let getHex: (x: number, y: number) => any;
+
+	beforeEach(() => {
+		const setup = makeGame();
+		game = setup.game;
+		getHex = setup.getHex;
+	});
+
+	const buildAbility = (creature: any): any => {
+		const defs = game.abilities[8] as any[] as Array<Record<string, any>>;
+		const meatSickleDef = defs.find(
+			(d) =>
+				typeof d.query === 'function' &&
+				d._targetTeam !== undefined &&
+				d._getMaxDistance !== undefined,
+		);
+		return {
+			...meatSickleDef,
+			creature,
+			isUpgraded: () => true,
+			end: jest.fn(),
+			title: 'Meat Sickle',
+			damages: { pierce: 1 },
+			animation: function (...args: unknown[]) {
+				return (this.activate as (...a: unknown[]) => unknown).apply(this, args);
+			},
+		};
+	};
+
+	const buildBaseAbility = (creature: any): any => {
+		const defs = game.abilities[8] as any[] as Array<Record<string, any>>;
+		const meatSickleDef = defs.find(
+			(d) =>
+				typeof d.query === 'function' &&
+				d._targetTeam !== undefined &&
+				d._getMaxDistance !== undefined,
+		);
+		return {
+			...meatSickleDef,
+			creature,
+			isUpgraded: () => false,
+			end: jest.fn(),
+			title: 'Meat Sickle',
+			damages: { pierce: 1 },
+			animation: function (...args: unknown[]) {
+				return (this.activate as (...a: unknown[]) => unknown).apply(this, args);
+			},
+		};
+	};
+
+	test('clicking the first hexagon of the path executes on the target', () => {
+		const hornHead = makeCreature(8, 1, 5, 2);
+		getHex(0, 5).creature = hornHead;
+		getHex(1, 5).creature = hornHead;
+		const enemy = makeCreature(33, 4, 5, 1);
+		getHex(4, 5).creature = enemy;
+		getHex(5, 5).creature = enemy;
+
+		const ability = buildAbility(hornHead);
+		(ability.query as () => void).call(ability);
+
+		expect(game.grid.queryChoice).toHaveBeenCalledTimes(1);
+		const queryOpt = game.grid.queryChoice.mock.calls[0][0];
+		expect(queryOpt.choices.length).toBeGreaterThan(0);
+
+		const rightChoice = queryOpt.choices.find((choice: any[]) =>
+			choice.some((h) => h.creature === enemy),
+		);
+		expect(rightChoice).toBeDefined();
+		expect(rightChoice[0]).toBe(getHex(2, 5));
+
+		queryOpt.fnOnConfirm(rightChoice, { direction: Direction.Right, hex: rightChoice[0] });
+
+		expect(ability.end).toHaveBeenCalled();
+	});
+
+	test('flipped Horn Head: forward and backward paths skip caster hexes and reach opposite sides', () => {
+		const hornHead = makeCreature(8, 1, 5, 2);
+		hornHead.player = { flipped: true };
+		hornHead.hexagons = [
+			{ x: 0, y: 5 },
+			{ x: 1, y: 5 },
+		];
+		getHex(0, 5).creature = hornHead;
+		getHex(1, 5).creature = hornHead;
+
+		const frontEnemy = makeCreature(33, -3, 5, 1);
+		getHex(-3, 5).creature = frontEnemy;
+		getHex(-4, 5).creature = frontEnemy;
+
+		const backEnemy = makeCreature(34, 4, 5, 1);
+		getHex(4, 5).creature = backEnemy;
+		getHex(5, 5).creature = backEnemy;
+
+		const ability = buildAbility(hornHead);
+		(ability.query as () => void).call(ability);
+
+		expect(game.grid.queryChoice).toHaveBeenCalledTimes(1);
+		const queryOpt = game.grid.queryChoice.mock.calls[0][0];
+
+		const frontChoices = queryOpt.choices.filter((c: any[]) =>
+			c.some((h) => h.creature === frontEnemy),
+		);
+		const backChoices = queryOpt.choices.filter((c: any[]) =>
+			c.some((h) => h.creature === backEnemy),
+		);
+		expect(frontChoices.length).toBe(1);
+		expect(backChoices.length).toBe(1);
+
+		for (const choice of [...frontChoices, ...backChoices]) {
+			expect(choice[0].creature?.id).not.toBe(hornHead.id);
+		}
+
+		queryOpt.fnOnConfirm(backChoices[0], {
+			direction: Direction.Left,
+			hex: backChoices[0][0],
+		});
+		expect(ability.end).toHaveBeenCalled();
+	});
+
+	test('blue Horn Head confirms backward choice even if confirm direction is stale', () => {
+		const hornHead = makeCreature(8, 1, 5, 2);
+		getHex(0, 5).creature = hornHead;
+		getHex(1, 5).creature = hornHead;
+
+		const enemy = makeCreature(34, -2, 5, 1);
+		getHex(-2, 5).creature = enemy;
+		getHex(-3, 5).creature = enemy;
+
+		const ability = buildAbility(hornHead);
+		(ability.query as () => void).call(ability);
+
+		expect(game.grid.queryChoice).toHaveBeenCalledTimes(1);
+		const queryOpt = game.grid.queryChoice.mock.calls[0][0];
+		const leftChoice = queryOpt.choices.find((choice: any[]) => choice.some((h) => h.creature === enemy));
+		expect(leftChoice).toBeDefined();
+
+		queryOpt.fnOnConfirm(leftChoice, { direction: Direction.Right, hex: leftChoice[0] });
+
+		expect(ability.end).toHaveBeenCalled();
+	});
+
+	test('blue Horn Head confirms backward choice when clicked hex has same coords but different object', () => {
+		const hornHead = makeCreature(8, 1, 5, 2);
+		getHex(0, 5).creature = hornHead;
+		getHex(1, 5).creature = hornHead;
+
+		const enemy = makeCreature(35, -2, 5, 1);
+		getHex(-2, 5).creature = enemy;
+		getHex(-3, 5).creature = enemy;
+
+		const ability = buildAbility(hornHead);
+		(ability.query as () => void).call(ability);
+
+		const queryOpt = game.grid.queryChoice.mock.calls[0][0];
+		const leftChoice = queryOpt.choices.find((choice: any[]) => choice.some((h) => h.creature === enemy));
+		expect(leftChoice).toBeDefined();
+
+		const detachedClickedHex = {
+			x: leftChoice[0].x,
+			y: leftChoice[0].y,
+			pos: { x: leftChoice[0].x, y: leftChoice[0].y },
+			direction: Direction.Right,
+		};
+
+		queryOpt.fnOnConfirm(leftChoice, { direction: Direction.Right, hex: detachedClickedHex });
+
+		expect(ability.end).toHaveBeenCalled();
+	});
+
+	test('base Meat Sickle uses shared queryChoice targeting and confirms backward blue cast', () => {
+		const hornHead = makeCreature(8, 1, 5, 2);
+		getHex(0, 5).creature = hornHead;
+		getHex(1, 5).creature = hornHead;
+
+		const enemy = makeCreature(36, -2, 5, 1);
+		getHex(-2, 5).creature = enemy;
+		getHex(-3, 5).creature = enemy;
+
+		const ability = buildBaseAbility(hornHead);
+		(ability.query as () => void).call(ability);
+
+		expect(game.grid.queryDirection).not.toHaveBeenCalled();
+		expect(game.grid.queryChoice).toHaveBeenCalledTimes(1);
+
+		const queryOpt = game.grid.queryChoice.mock.calls[0][0];
+		const leftChoice = queryOpt.choices.find((choice: any[]) => choice.some((h) => h.creature === enemy));
+		expect(leftChoice).toBeDefined();
+
+		queryOpt.fnOnConfirm(leftChoice, { direction: Direction.Right, hex: leftChoice[0] });
+
+		expect(ability.end).toHaveBeenCalled();
+	});
+});

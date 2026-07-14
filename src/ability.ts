@@ -558,11 +558,6 @@ export class Ability {
 
 		// Animate
 		const p0 = this.creature.sprite.x;
-		let p1 = p0;
-		let p2 = p0;
-
-		p1 += this.creature.player.flipped ? 5 : -5;
-		p2 += this.creature.player.flipped ? -5 : 5;
 
 		this.creature.facePlayerDefault();
 
@@ -578,6 +573,23 @@ export class Ability {
 				}
 			}
 		}
+
+		// The lunge (windup then thrust) must go the direction the creature is
+		// *actually* facing right now, i.e. after facePlayerDefault/faceHex above
+		// have potentially flipped it to face a target behind its default
+		// orientation (e.g. Horn Head's Meat Sickle cast backward). Using the
+		// static player.flipped flag here (as before) ignores that re-facing, so
+		// a backward-facing creature would lunge toward its old default facing
+		// instead of the direction it's now actually turned to — a few pixels of
+		// mismatch that's very visible on effects tracking an exact emission
+		// point, like Meat Sickle's hook/chain.
+		const facingFlipped = this.creature.sprite.scale.x < 0;
+		let p1 = p0;
+		let p2 = p0;
+
+		p1 += facingFlipped ? 5 : -5;
+		p2 += facingFlipped ? -5 : 5;
+
 		// Play animations and sounds only for active abilities
 		if (this.getTrigger() === 'onQuery') {
 			const animId = Math.random();
