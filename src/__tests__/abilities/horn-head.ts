@@ -527,14 +527,7 @@ const makeGame = () => {
 		grid: {
 			getHexLine: jest.fn((startX: number, y: number, dir: Direction, flipped?: boolean) => {
 				if ((dir === Direction.Right || dir === Direction.Left) && y === 5) {
-					const step =
-						dir === Direction.Right
-							? flipped
-								? -1
-								: 1
-							: flipped
-								? 1
-								: -1;
+					const step = dir === Direction.Right ? (flipped ? -1 : 1) : flipped ? 1 : -1;
 					const xs = [
 						startX,
 						startX + step,
@@ -717,7 +710,9 @@ describe('Meat Sickle clicking the first hexagon of a path', () => {
 
 		expect(game.grid.queryChoice).toHaveBeenCalledTimes(1);
 		const queryOpt = game.grid.queryChoice.mock.calls[0][0];
-		const leftChoice = queryOpt.choices.find((choice: any[]) => choice.some((h) => h.creature === enemy));
+		const leftChoice = queryOpt.choices.find((choice: any[]) =>
+			choice.some((h) => h.creature === enemy),
+		);
 		expect(leftChoice).toBeDefined();
 
 		queryOpt.fnOnConfirm(leftChoice, { direction: Direction.Right, hex: leftChoice[0] });
@@ -738,7 +733,9 @@ describe('Meat Sickle clicking the first hexagon of a path', () => {
 		(ability.query as () => void).call(ability);
 
 		const queryOpt = game.grid.queryChoice.mock.calls[0][0];
-		const leftChoice = queryOpt.choices.find((choice: any[]) => choice.some((h) => h.creature === enemy));
+		const leftChoice = queryOpt.choices.find((choice: any[]) =>
+			choice.some((h) => h.creature === enemy),
+		);
 		expect(leftChoice).toBeDefined();
 
 		const detachedClickedHex = {
@@ -769,7 +766,9 @@ describe('Meat Sickle clicking the first hexagon of a path', () => {
 		expect(game.grid.queryChoice).toHaveBeenCalledTimes(1);
 
 		const queryOpt = game.grid.queryChoice.mock.calls[0][0];
-		const leftChoice = queryOpt.choices.find((choice: any[]) => choice.some((h) => h.creature === enemy));
+		const leftChoice = queryOpt.choices.find((choice: any[]) =>
+			choice.some((h) => h.creature === enemy),
+		);
 		expect(leftChoice).toBeDefined();
 
 		queryOpt.fnOnConfirm(leftChoice, { direction: Direction.Right, hex: leftChoice[0] });

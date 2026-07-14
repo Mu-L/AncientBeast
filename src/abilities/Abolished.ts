@@ -338,8 +338,12 @@ export default (G: Game) => {
 				// stay plain hex.png (no path underlay).
 				const showDefaultArea = function () {
 					range.forEach(function (hex) {
-						hex.cleanOverlayVisualState('hover selected reachable weakDmg moveto ownCreatureHexShade h_player0 h_player1 h_player2 h_player3');
-						hex.cleanDisplayVisualState('adj dashed shrunken creature player0 player1 player2 player3');
+						hex.cleanOverlayVisualState(
+							'hover selected reachable weakDmg moveto ownCreatureHexShade h_player0 h_player1 h_player2 h_player3',
+						);
+						hex.cleanDisplayVisualState(
+							'adj dashed shrunken creature player0 player1 player2 player3',
+						);
 						if (hex.creature instanceof Creature && hex.creature.id !== crea.id) {
 							hex.overlayVisualState('hover h_player' + hex.creature.team);
 						}
@@ -352,8 +356,12 @@ export default (G: Game) => {
 				// Empty hexes in the blast also get the hex_path underlay.
 				const showOutlinedArea = function () {
 					range.forEach(function (hex) {
-						hex.cleanOverlayVisualState('hover selected reachable weakDmg moveto ownCreatureHexShade h_player0 h_player1 h_player2 h_player3');
-						hex.cleanDisplayVisualState('adj dashed shrunken creature player0 player1 player2 player3');
+						hex.cleanOverlayVisualState(
+							'hover selected reachable weakDmg moveto ownCreatureHexShade h_player0 h_player1 h_player2 h_player3',
+						);
+						hex.cleanDisplayVisualState(
+							'adj dashed shrunken creature player0 player1 player2 player3',
+						);
 						if (hex.creature instanceof Creature && hex.creature.id !== crea.id) {
 							hex.overlayVisualState('hover h_player' + hex.creature.team);
 						} else {

@@ -22,7 +22,6 @@ import type {
 	LobbySession,
 	LobbyState,
 } from './multiplayer';
-import { sleep } from './utility/time';
 import { DEBUG_DISABLE_GAME_STATUS_CONSOLE_LOG, DEBUG_DISABLE_MUSIC } from './debug';
 import { Point, configure as configurePointFacade } from './utility/pointfacade';
 import { pretty as version } from './utility/version';
@@ -888,7 +887,7 @@ export default class Game {
 		this.lobby.sendAction({
 			type: 'action-ability',
 			id: params.id,
-			target: params.target as any,
+			target: params.target as any, // eslint-disable-line @typescript-eslint/no-explicit-any
 			args: params.args,
 			playerId: this.lobby.getLocalPlayer()?.playerId || '',
 			creatureId: this.activeCreature.id,

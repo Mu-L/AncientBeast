@@ -98,6 +98,7 @@ export class PeerTransport implements ITransport {
 			});
 
 			this.peer.on('connection', (connection) => {
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
 				(connection as any).__connectedAt = Date.now();
 				this.registerConnection(connection);
 			});
@@ -206,7 +207,9 @@ export class PeerTransport implements ITransport {
 	}
 
 	private openConnection(hostPeerId: string, attempt = 0): import('peerjs').DataConnection {
+		// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
 		const connection = this.peer!.connect(hostPeerId, { reliable: true });
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		(connection as any).__connectedAt = Date.now();
 		this.registerConnection(connection);
 
@@ -238,6 +241,7 @@ export class PeerTransport implements ITransport {
 
 	private registerConnection(connection: import('peerjs').DataConnection): void {
 		const existingConnection = this.connections.get(connection.peer);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const incomingConnectedAt = (connection as any).__connectedAt ?? Date.now();
 
 		if (existingConnection) {

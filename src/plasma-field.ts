@@ -245,7 +245,11 @@ export class PlasmaField {
 		this.low = document.createElement('canvas');
 		this.low.width = this.rw;
 		this.low.height = this.rh;
-		this.lowCtx = this.low.getContext('2d', { willReadFrequently: true })!;
+		const ctx = this.low.getContext('2d', { willReadFrequently: true });
+		if (!ctx) {
+			throw new Error('Failed to get 2d context');
+		}
+		this.lowCtx = ctx;
 		this._imgData = this.lowCtx.createImageData(this.rw, this.rh);
 
 		this.bmd = phaser.add.bitmapData(this.w, this.h);

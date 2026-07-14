@@ -115,7 +115,7 @@ const getMeatSickleLanding = (line: Hex[], target: Creature, targetIndex: number
 	return { landingHex: undefined, landingIndex: -1 };
 };
 
-const getUpgradedMeatSickleChoices = (G: Game, creature: Creature) =>
+const _getUpgradedMeatSickleChoices = (G: Game, creature: Creature) =>
 	meatSickleInlineDirections.map((direction) => getMeatSicklePath(G, creature, direction, 5));
 
 const getMeatSickleDirectionMask = (direction: Direction) => {
@@ -152,7 +152,7 @@ const getMeatSickleQueryChoiceData = (
 	creature: Creature,
 	targetTeam: Team,
 	requireCreature: boolean,
-	) => {
+) => {
 	if (typeof G.grid.getDirectionChoices !== 'function') {
 		const fallbackChoices = requireCreature
 			? getUpgradedMeatSickleTargetChoices(G, creature, targetTeam)
@@ -293,10 +293,7 @@ const getMeatSickleQueryChoices = (G: Game, creature: Creature, targetTeam: Team
 
 			if (isTeam(creature, blockingCreature, targetTeam) && blockingCreature.stats.moveable) {
 				const targetHexes = (blockingCreature.hexagons ?? []).filter(Boolean);
-				return asMeatSickleChoice(
-					uniqueHexes(path.slice(0, i + 1).concat(targetHexes)),
-					direction,
-				);
+				return asMeatSickleChoice(uniqueHexes(path.slice(0, i + 1).concat(targetHexes)), direction);
 			}
 
 			return asMeatSickleChoice(path.slice(0, i + 1), direction);
@@ -323,8 +320,8 @@ const getMeatSickleDirectionFromPath = (
 	const sameHex = (a?: Hex, b?: Hex) => Boolean(a && b && a.x === b.x && a.y === b.y);
 
 	// Try to find direction where this hex is the first hex in the path
-	let direction = meatSickleInlineDirections.find(
-		(direction) => sameHex(getMeatSicklePath(G, creature, direction, 1)[0], probeHex),
+	let direction = meatSickleInlineDirections.find((direction) =>
+		sameHex(getMeatSicklePath(G, creature, direction, 1)[0], probeHex),
 	);
 
 	// If not found (e.g., clicking empty hex in middle of range), try to find the direction
@@ -850,12 +847,9 @@ export default (G: Game) => {
 					this._targetTeam,
 					true,
 				);
-				const choices = getMeatSickleQueryChoiceData(
-					G,
-					this.creature,
-					this._targetTeam,
-					false,
-				).map((entry) => entry.choice);
+				const choices = getMeatSickleQueryChoiceData(G, this.creature, this._targetTeam, false).map(
+					(entry) => entry.choice,
+				);
 				const targetChoices = targetChoiceData
 					.map((entry) => entry.choice)
 					.filter((choice) => choice.length > 0);
@@ -897,7 +891,9 @@ export default (G: Game) => {
 					const outlinedHexes = uniqueHexes(choiceSets.flat());
 					outlinedHexes.forEach((hex: Hex) => {
 						hex.cleanOverlayVisualState();
-						hex.cleanDisplayVisualState('adj creature selected player0 player1 player2 player3 dashed');
+						hex.cleanDisplayVisualState(
+							'adj creature selected player0 player1 player2 player3 dashed',
+						);
 						if (hex.creature instanceof Creature) {
 							hex.displayVisualState('creature player' + hex.creature.team);
 						}
@@ -907,7 +903,9 @@ export default (G: Game) => {
 					showOutlinedChoices(allChoices);
 					choice.forEach((hex: Hex) => {
 						hex.cleanOverlayVisualState();
-						hex.cleanDisplayVisualState('adj creature selected player0 player1 player2 player3 dashed');
+						hex.cleanDisplayVisualState(
+							'adj creature selected player0 player1 player2 player3 dashed',
+						);
 						if (hex.creature instanceof Creature) {
 							hex.overlayVisualState('hover h_player' + hex.creature.team);
 						} else {
@@ -956,8 +954,9 @@ export default (G: Game) => {
 					path,
 					selectedHex,
 				);
-				const direction = directionFromPath
-					?? (meatSickleInlineDirections.includes(queryDirection) ? queryDirection : undefined);
+				const direction =
+					directionFromPath ??
+					(meatSickleInlineDirections.includes(queryDirection) ? queryDirection : undefined);
 
 				if (direction === undefined) {
 					return;
@@ -1037,10 +1036,7 @@ export default (G: Game) => {
 				}
 				const pulledHexes =
 					landingHex && landingIndex > -1
-						? Math.max(
-								0,
-								targetIndex - landingIndex + (landingIndex === targetIndex ? 1 : 0),
-							)
+						? Math.max(0, targetIndex - landingIndex + (landingIndex === targetIndex ? 1 : 0))
 						: 0;
 				const movementDrain = Math.min(target.stats.movement, pulledHexes);
 				const damageHexes = Math.max(0, pulledHexes - movementDrain);
@@ -1058,15 +1054,16 @@ export default (G: Game) => {
 						setTimeout(cleanup, 500);
 					}
 					G.log(
-						`%CreatureName${ability.creature.id}% uses Meat Sickle ${directionLabel} on %CreatureName${target.id}% (${targetIndex === 0 ? 'melee hit' : 'no pull'})`,
+						`%CreatureName${
+							ability.creature.id
+						}% uses Meat Sickle ${directionLabel} on %CreatureName${target.id}% (${
+							targetIndex === 0 ? 'melee hit' : 'no pull'
+						})`,
 					);
 					// Apply direct hit damage at melee range; otherwise use pull-distance damage.
 					if (targetIndex === 0 || damageHexes > 0) {
-						const pierceDamage =
-							targetIndex === 0 ? ability.damages.pierce : damageHexes;
-						target.takeDamage(
-							new Damage(ability.creature, { pierce: pierceDamage }, 1, [], G),
-						);
+						const pierceDamage = targetIndex === 0 ? ability.damages.pierce : damageHexes;
+						target.takeDamage(new Damage(ability.creature, { pierce: pierceDamage }, 1, [], G));
 					}
 
 					if (ability.isUpgraded()) {
@@ -1090,7 +1087,11 @@ export default (G: Game) => {
 						350,
 						() => {
 							G.log(
-								`%CreatureName${ability.creature.id}% uses Meat Sickle ${directionLabel} on %CreatureName${target.id}% (pulled ${pulledHexes} hex${pulledHexes === 1 ? '' : 'es'})`,
+								`%CreatureName${
+									ability.creature.id
+								}% uses Meat Sickle ${directionLabel} on %CreatureName${
+									target.id
+								}% (pulled ${pulledHexes} hex${pulledHexes === 1 ? '' : 'es'})`,
 							);
 							target.moveTo(landingHex, {
 								ignoreMovementPoint: true,
@@ -1143,9 +1144,9 @@ export default (G: Game) => {
 										);
 									}
 
-										if (ability.isUpgraded()) {
-											applyMovementRestriction(ability.creature, target, G);
-										}
+									if (ability.isUpgraded()) {
+										applyMovementRestriction(ability.creature, target, G);
+									}
 
 									G.activeCreature.queryMove();
 								},
