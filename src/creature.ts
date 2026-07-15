@@ -13,7 +13,12 @@ import { AugmentedMatrix } from './utility/matrices';
 import { Trap } from './utility/trap';
 import { HEX_WIDTH_PX, hashOffsetCoords, offsetNeighbors } from './utility/const';
 import { CreatureType, Level, Realm, Unit, UnitName } from './data/types';
-import { PlasmaField } from './plasma-field';
+import {
+	PlasmaField,
+	detectWeakHardware,
+	detectVeryWeakHardware,
+	computePlasmaRenderScale,
+} from './plasma-field';
 
 /** Vertical distance (in pixels) between the Dark Priest's feet and the Plasma Field center. */
 const PLASMA_FIELD_OFFSET_Y = 90;
@@ -1735,21 +1740,38 @@ export class Creature {
 			const cardboard = this.creatureSprite.sprite;
 			const hueShift = PLASMA_FIELD_HUE_BY_COLOR[this.player.color] || 0;
 
-			// Horizontal centering is derived from the topmost opaque row of the
-			// cardboard texture, so the field aligns with the priest's head
-			// regardless of which variant the texture is (human / bot clone).
+			// On lower-end machines, reduce the plasma field rendering cost.
+			// Very weak hardware (<=2 cores) gets a static pre-rendered shield;
+			// weak hardware (<=4 cores) renders at a much lower resolution.
 			this._plasmaFieldBaseOffsetX = computeCardboardCenterOffset(phaser, cardboard);
 			const offsetXMirror = (cardboard.scale.x < 0 ? -1 : 1) * this._plasmaFieldBaseOffsetX;
+
+			const opts: Record<string, unknown> = {
+				parent: this.creatureSprite.grp,
+				hueShift,
+				creature: this,
+			};
+			if (detectVeryWeakHardware()) {
+				opts.staticMode = true;
+			} else {
+				let renderScale = 1;
+				if (detectWeakHardware()) {
+					renderScale = Math.max(renderScale, 4);
+				}
+				const displayScale = computePlasmaRenderScale();
+				if (displayScale > 1) {
+					renderScale = Math.max(renderScale, displayScale);
+				}
+				if (renderScale > 1) {
+					opts.renderScale = renderScale;
+				}
+			}
 
 			this.plasmaField = new PlasmaField(
 				phaser,
 				cardboard.x + offsetXMirror,
 				cardboard.y - PLASMA_FIELD_OFFSET_Y,
-				{
-					parent: this.creatureSprite.grp,
-					hueShift,
-					creature: this,
-				},
+				opts,
 			);
 			this.creatureSprite.addPostUpdateHook(() => {
 				if (this.plasmaField) {

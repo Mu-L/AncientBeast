@@ -41,8 +41,57 @@ export interface PlasmaFieldOptions extends Partial<PlasmaFieldSettings> {
 	alpha?: number;
 	fps?: number;
 	renderScale?: number;
+	staticMode?: boolean;
 	parent?: Phaser.Group;
 	creature?: Creature;
+}
+
+const WEAK_CORE_THRESHOLD = 4;
+const VERY_WEAK_CORE_THRESHOLD = 2;
+
+export function detectWeakHardware(): boolean {
+	try {
+		if (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) {
+			return navigator.hardwareConcurrency <= WEAK_CORE_THRESHOLD;
+		}
+	} catch {
+		// navigator may be unavailable in some environments.
+	}
+	return false;
+}
+
+export function detectVeryWeakHardware(): boolean {
+	try {
+		if (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) {
+			return navigator.hardwareConcurrency <= VERY_WEAK_CORE_THRESHOLD;
+		}
+	} catch {
+		// navigator may be unavailable in some environments.
+	}
+	return false;
+}
+
+const LOGICAL_GAME_WIDTH = 1920;
+
+export function computePlasmaRenderScale(): number {
+	try {
+		if (typeof window !== 'undefined') {
+			const displayWidth = window.innerWidth || 0;
+			const ratio = displayWidth / LOGICAL_GAME_WIDTH;
+			if (ratio < 0.4) return 4;
+			if (ratio < 0.75) return 2;
+		}
+	} catch {
+		// window may be unavailable.
+	}
+	return 1;
+}
+
+export function refreshPlasmaRenderScales(): void {
+	const scale = computePlasmaRenderScale();
+	for (const field of _activeFields) {
+		field.updateRenderScale(scale);
+	}
 }
 
 const DEFAULT_SETTINGS: PlasmaFieldSettings = {
@@ -215,6 +264,7 @@ export class PlasmaField {
 	private creature: Creature | null;
 	onBurstEnd: (() => void) | null;
 	private fps: number;
+	private _staticMode: boolean;
 
 	constructor(phaser: Phaser.Game, x: number, y: number, opt: PlasmaFieldOptions = {}) {
 		this.phaser = phaser;
@@ -235,6 +285,7 @@ export class PlasmaField {
 		this.burstPower = 0;
 		this.outlinePower = 0;
 		this.fps = opt.fps || 24;
+		this._staticMode = !!opt.staticMode;
 
 		this.settings = { ...DEFAULT_SETTINGS, ...opt };
 
@@ -261,7 +312,11 @@ export class PlasmaField {
 		this.sprite.alpha = this.alpha;
 		this.sprite.blendMode = Phaser.blendModes.ADD;
 
-		_registerField(this);
+		if (this._staticMode) {
+			this.draw();
+		} else {
+			_registerField(this);
+		}
 	}
 
 	private band(s: number, center: number, width: number): number {
@@ -549,8 +604,11 @@ export class PlasmaField {
 
 	setVisible(visible: boolean): void {
 		this.sprite.visible = visible;
-		if (visible) _registerField(this);
-		else _unregisterField(this);
+		if (visible && !this._staticMode) {
+			_registerField(this);
+		} else if (!visible && !this._staticMode) {
+			_unregisterField(this);
+		}
 	}
 
 	burst(): void {
@@ -572,5 +630,16 @@ export class PlasmaField {
 		this.onBurstEnd = null;
 		if (this.sprite && this.sprite.destroy) this.sprite.destroy();
 		if (this.bmd && this.bmd.destroy) this.bmd.destroy();
+	}
+
+	updateRenderScale(scale: number): void {
+		if (scale <= 1 || this.renderScale === scale) return;
+		this.renderScale = scale;
+		this.rw = Math.floor(this.w / this.renderScale);
+		this.rh = Math.floor(this.h / this.renderScale);
+		this.low.width = this.rw;
+		this.low.height = this.rh;
+		this._imgData = this.lowCtx.createImageData(this.rw, this.rh);
+		this.draw();
 	}
 }
