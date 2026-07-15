@@ -29,10 +29,13 @@ export class LobbyEngine {
 	private intents: Intent[] = [];
 	sequence = 0;
 
+	private readonly config: Partial<HeadlessConfig>;
+
 	private constructor(
-		private readonly config: Partial<HeadlessConfig>,
+		config: Partial<HeadlessConfig>,
 		abilities: Array<(G: any) => void>,
 	) {
+		this.config = config;
 		void abilities;
 	}
 

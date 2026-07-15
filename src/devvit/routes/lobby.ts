@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { redis } from '@devvit/web/server';
 import { ACTIVE_MATCHES_KEY } from '../queue';
+import { authoritativeProcessor } from '../authoritativeRuntime';
+import type { Intent } from '../authoritativeTypes';
 import {
 	appendMessage,
 	claimHost,
@@ -161,6 +163,28 @@ lobby.post('/:code/message', async (c) => {
 	const cursor = await appendMessage(code, from, body.message as Record<string, unknown>);
 	await markPlayerSeen(code, from);
 	await refreshTtl(code);
+
+	// Server-authoritative intent: append to the ordered log so any consumer
+	// that replays it through the engine gets the same state. The server is
+	// engine-agnostic — the engine (`LobbyEngine`/`game.ts`) runs in the
+	// client browser (or a dedicated engine node) and pulls pixi/phaser
+	// through its own bundle. The Devvit serverless bundle intentionally
+	// stays free of those browser-only deps. Guarded so a processor failure
+	// never breaks normal message relay.
+	if (body.message && (body.message as Record<string, unknown>).type === 'intent') {
+		try {
+			const { sequence } = await authoritativeProcessor.step(
+				code,
+				(body.message as { intent: Intent }).intent,
+			);
+			await appendMessage(code, meta.hostPeerId || 'server', {
+				type: 'intent-ack',
+				sequence,
+			});
+		} catch (error) {
+			console.warn('[lobby] authoritative intent failed:', error);
+		}
+	}
 
 	return c.json({ cursor });
 });
