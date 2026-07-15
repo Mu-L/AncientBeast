@@ -190,21 +190,91 @@ export default class Game {
 		// Note: Scale manager configuration happens in setup() after Phaser is ready
 	}
 
+	whenPhaserBooted(phaser: Phaser.Game | null, onBooted: (phaser: Phaser.Game) => void) {
+		if (!phaser) {
+			return;
+		}
+
+		if (phaser === this.Phaser && phaser.isBooted && phaser.load) {
+			onBooted(phaser);
+			return;
+		}
+
+		window.setTimeout(() => {
+			if (phaser !== this.Phaser) {
+				return;
+			}
+
+			this.whenPhaserBooted(phaser, onBooted);
+		}, 0);
+	}
+
 	destroyPhaser() {
 		if (this.Phaser) {
+			const phaser = this.Phaser;
+
+			// Kill client-side timers tied to the old game/UI BEFORE nulling them,
+			// otherwise they keep firing on the torn-down instance and throw
+			// "grid is null" (UI glowInterval), "this.UI is null" / "updateTimer"
+			// (game checkTime via timeInterval), etc. See destroyPhaser's notes on
+			// the dead-Phaser rAF loop below.
+			if (this.UI) {
+				if (this.UI.glowInterval != null) {
+					clearInterval(this.UI.glowInterval);
+					this.UI.glowInterval = undefined;
+				}
+				this.UI = null;
+			}
+			if (this.timeInterval != null) {
+				clearInterval(this.timeInterval);
+				this.timeInterval = undefined;
+			}
+			if (this.windowResizeTimeout != null) {
+				clearTimeout(this.windowResizeTimeout);
+				this.windowResizeTimeout = undefined;
+			}
+
+			// Detach pending async callbacks before destroying.
+			// Phaser.Game.destroy() stops the rAF loop but leaves the Cache's
+			// `onReady` signal and the Loader's completion signals registered.
+			// If createPhaser() is called again before those async callbacks
+			// (default/missing texture decodes, asset loads) settle, they fire
+			// on the already-destroyed game, calling raf.start() -> Game.update()
+			// -> this.time.update() where `this.time` is now null. This throws
+			// "can't access property 'update', this.time is null" (phaser-split.js
+			// Game.update, line ~14835). Clearing them prevents a dead game from
+			// starting its loop or running finishLoading/loadFinish after death.
+			if (phaser.cache && phaser.cache.onReady && phaser.cache.onReady.removeAll) {
+				phaser.cache.onReady.removeAll();
+			}
+			if (phaser.load) {
+				if (phaser.load.onLoadComplete && phaser.load.onLoadComplete.removeAll) {
+					phaser.load.onLoadComplete.removeAll();
+				}
+				if (phaser.load.onFileComplete && phaser.load.onFileComplete.removeAll) {
+					phaser.load.onFileComplete.removeAll();
+				}
+			}
+
 			// IMPORTANT: Remove the canvas element from the DOM before destroying Phaser
 			// Phaser.destroy() does NOT remove the canvas, so we'd end up duplicated canvases
-			const canvas = this.Phaser.canvas;
+			const canvas = phaser.canvas;
 			if (canvas && canvas.parentNode) {
 				canvas.parentNode.removeChild(canvas);
 			}
 
 			// Destroy Phaser with cleanup to avoid memory leaks
 			// Parameters: clearWorld=true (remove game objects), clearCache=false
-			this.Phaser.destroy(true, false);
+			// Stop the rAF loop first so a pending frame can't fire Game.update()
+			// (this.time is null) on the dying instance after destroy() returns.
+			if (phaser.raf && typeof phaser.raf.stop === 'function') {
+				phaser.raf.stop();
+			}
+			phaser.destroy(true, false);
 			this.Phaser = null;
 
-			// Reset game state
+			// Reset game state (this.UI is already nulled above when its interval
+			// was cleared, kept here for clarity)
 			this.grid = null;
 			this.UI = null;
 			this.gameState = 'initialized';
@@ -263,8 +333,10 @@ export default class Game {
 			infiniteEnergy: false,
 		};
 
-		// Phaser
-		this.createPhaser();
+		// Phaser is created lazily in loadGame() on the first match start.
+		// Creating it here (at app boot) was redundant: it was always destroyed
+		// and rebuilt moments later by loadGame(), which also triggered a crash
+		// when a stale instance's pending async callbacks fired after destruction.
 
 		// Messages
 		// TODO: Move strings to external file in order to be able to support translations
@@ -394,6 +466,18 @@ export default class Game {
 		// eslint-disable-next-line @typescript-eslint/no-empty-function
 		onLoadCompleteFn = () => {},
 	) {
+		// Guard against a re-entrant load while one is already initializing (e.g. a
+		// match-start echo arriving after the host already began loading, or a stray
+		// second match-start delivery). Without this, loadGame() can run twice in the
+		// same match, spawning a second Phaser instance whose rAF loop outlives the
+		// first and throws "this.time is null", and leaving one client's setup
+		// half-initialized. We only block an *in-progress* load ('loading'); a fresh
+		// match is always allowed (the previous one is torn down by createPhaser's
+		// destroyPhaser), so we never block a legitimate rematch.
+		if (this.gameState === 'loading') {
+			return;
+		}
+
 		// Create a fresh Phaser instance for this game session
 		// (createPhaser safely destroys any existing Phaser first to prevent duplicates)
 		this.createPhaser();
@@ -420,27 +504,29 @@ export default class Game {
 		this.soundsys = new SoundSys({ paths: soundPaths });
 		this.musicPlayer = this.soundsys.musicPlayer;
 
-		this.Phaser.load.onFileComplete.add(this.loadFinish, this);
-		this.Phaser.load.onLoadComplete.add(this.finishLoading, this);
-		this.Phaser.load.onLoadComplete.add(onLoadCompleteFn, this);
+		this.whenPhaserBooted(this.Phaser, (phaser) => {
+			phaser.load.onFileComplete.add(this.loadFinish, this);
+			phaser.load.onLoadComplete.add(this.finishLoading, this);
+			phaser.load.onLoadComplete.add(onLoadCompleteFn, this);
 
-		const assetsRaw = assetsUse(this.Phaser);
-		const assets = Array.isArray(assetsRaw) ? assetsRaw : [];
+			const assetsRaw = assetsUse(phaser);
+			const assets = Array.isArray(assetsRaw) ? assetsRaw : [];
 
-		console.log('[DEBUG] Safe assets list:', assets);
+			console.log('[DEBUG] Safe assets list:', assets);
 
-		assets.forEach((_asset) => {
-			// safely process each asset here
+			assets.forEach((_asset) => {
+				// safely process each asset here
+			});
+
+			// Background
+			phaser.load.image('background', getUrl('locations/' + this.background_image));
+
+			// Branding
+			phaser.load.image('AncientBeastLogo', getUrl('interface/AncientBeast'));
+
+			// Load artwork, shout and avatar for each unit
+			this.loadUnitData(unitData);
 		});
-
-		// Background
-		this.Phaser.load.image('background', getUrl('locations/' + this.background_image));
-
-		// Branding
-		this.Phaser.load.image('AncientBeastLogo', getUrl('interface/AncientBeast'));
-
-		// Load artwork, shout and avatar for each unit
-		this.loadUnitData(unitData);
 	}
 
 	hexAt(x: number, y: number): Hex | undefined {
@@ -619,6 +705,15 @@ export default class Game {
 		$j('#matchMaking').hide();
 
 		this.players = [];
+		// Drop any leftover creatures/traps/drops/effects from a previous match.
+		// createPhaser() above destroyed their Phaser sprites (clearWorld), so these
+		// stale objects would otherwise carry null sprite internals (`this._tweens is
+		// null` in resetBounce) into this setup and crash when nextCreature fires the
+		// onCloseDash signal that bounces every creature on the board.
+		this.creatures = [];
+		this.traps = [];
+		this.drops = [];
+		this.effects = [];
 		for (let i = 0; i < gameMode; i++) {
 			const player = new Player(i as PlayerID, this);
 			this.players.push(player);
@@ -754,12 +849,12 @@ export default class Game {
 		return session;
 	}
 
-	startMultiplayerMatch(): void {
+	startMultiplayerMatch(configOverride?: Record<string, unknown>): void {
 		if (!this.lobby || !this.lobby.isHost()) {
 			return;
 		}
 		const lobbyState = this.lobby.getLobbyState();
-		const config = lobbyState.config;
+		const config = (configOverride ?? lobbyState.config) as GameConfig;
 		this.lobby.markMatchStarted();
 		this.lobby.sendAction({
 			type: 'match-start',
@@ -774,6 +869,22 @@ export default class Game {
 
 	handleLobbyMessage(message: GameMessage): void {
 		if (message.type === 'match-start') {
+			// Idempotency guard: the host calls loadGame() directly in
+			// startMultiplayerMatch() and ALSO receives its own echoed
+			// match-start over the transport, so this handler can fire twice
+			// for the same match. A redundant match-start can also arrive from
+			// redelivery while loading is still in flight. If a match is already
+			// loading or in progress, ignore the duplicate so we don't destroy
+			// and recreate Phaser (which can start a dead game's loop and throw).
+			// A brand-new match after a previous one ended (gameState 'ended')
+			// is still allowed through.
+			if (
+				this.gameState === 'loading' ||
+				this.gameState === 'loaded' ||
+				this.gameState === 'playing'
+			) {
+				return;
+			}
 			this.multiplayer = true;
 			this.botOpponentIds = new Set(
 				(message.players || [])

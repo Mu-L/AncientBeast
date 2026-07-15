@@ -1795,7 +1795,7 @@ export class HexGrid {
 
 		this.hexes.forEach((hex) => {
 			hex.forEach((item) => {
-				if (item.creature instanceof Creature) {
+				if (activeCreature && item.creature instanceof Creature) {
 					if (item.creature.id == activeCreature.id) {
 						// Only add if not already present to avoid stacking duplicates
 						// and to avoid resetting overlay.alpha via updateStyle().

@@ -196,6 +196,39 @@ describe('Game reset lifecycle', () => {
 	});
 });
 
+describe('Game Phaser boot timing', () => {
+	beforeEach(() => {
+		jest.useFakeTimers();
+	});
+
+	afterEach(() => {
+		jest.useRealTimers();
+	});
+
+	test('whenPhaserBooted waits until the current Phaser instance exposes its loader', () => {
+		const onBooted = jest.fn();
+		const phaser = {
+			isBooted: false,
+			load: null,
+		} as unknown as Game['Phaser'];
+		const game = {
+			Phaser: phaser,
+			whenPhaserBooted: Game.prototype.whenPhaserBooted,
+		} as unknown as Game;
+
+		Game.prototype.whenPhaserBooted.call(game, phaser, onBooted);
+
+		expect(onBooted).not.toHaveBeenCalled();
+
+		(phaser as { isBooted: boolean; load: object | null }).isBooted = true;
+		(phaser as { isBooted: boolean; load: object | null }).load = {};
+		jest.runOnlyPendingTimers();
+
+		expect(onBooted).toHaveBeenCalledTimes(1);
+		expect(onBooted).toHaveBeenCalledWith(phaser);
+	});
+});
+
 describe('Game unload confirmation integration', () => {
 	test('confirmWindowUnload sets window.onbeforeunload (single registration) and updates active state', () => {
 		const addEventListenerSpy = jest.spyOn(window, 'addEventListener');
