@@ -194,7 +194,8 @@ export class DevvitTransport implements ITransport {
 					return;
 				}
 
-				const entries = (await res.json()) as MessageEntry[];
+				const entriesRaw = await res.json();
+				const entries = Array.isArray(entriesRaw) ? (entriesRaw as MessageEntry[]) : [];
 				const stateUrl = new URL(`/api/lobby/${encodeURIComponent(this.lobbyCode)}/state`, base);
 				stateUrl.searchParams.set('playerId', this.myId);
 				const stateRes = await fetchImpl(stateUrl.toString(), { method: 'GET' });
@@ -212,7 +213,8 @@ export class DevvitTransport implements ITransport {
 
 				for (const entry of entries) {
 					this.cursor = entry.cursor;
-					this.messageHandlers.forEach((handler) => handler(entry.message, entry.from));
+					const message = this.withServerOrder(entry.message, entry.cursor);
+					this.messageHandlers.forEach((handler) => handler(message, entry.from));
 
 					if (entry.from === this.myId) {
 						const resolve = this.connectResolve;
@@ -224,7 +226,8 @@ export class DevvitTransport implements ITransport {
 				}
 
 				if (state) {
-					const currentPeerIds = new Set(state.players.map((p) => p.peerId));
+					const statePlayers = Array.isArray(state.players) ? state.players : [];
+					const currentPeerIds = new Set(statePlayers.map((p) => p.peerId));
 
 					for (const peerId of currentPeerIds) {
 						if (!this.knownPeerIds.has(peerId)) {
@@ -256,6 +259,19 @@ export class DevvitTransport implements ITransport {
 
 		poll();
 		this.pollTimer = window.setInterval(poll, this.pollIntervalMs);
+	}
+
+	private withServerOrder(message: GameMessage, cursor: string): GameMessage {
+		const serverOrder = Number(cursor);
+
+		if (!Number.isFinite(serverOrder)) {
+			return message;
+		}
+
+		return {
+			...message,
+			serverOrder,
+		};
 	}
 
 	private connectedHandlersFired = false;

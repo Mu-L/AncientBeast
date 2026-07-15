@@ -18,35 +18,44 @@ export type AbilityTarget =
 	| { type: 'creature'; crea: number }
 	| { type: 'array'; array: Array<{ x: number; y: number }> };
 
-export type GameMessage =
-	| { type: 'player-joined'; player: LobbyPlayer }
-	| { type: 'lobby-joined'; player: LobbyPlayer }
-	| { type: 'player-left'; playerId: PlayerId; player: LobbyPlayer }
-	| {
-			type: 'match-start';
-			config: GameConfig;
-			players: LobbyPlayer[];
-			host: PlayerId;
-			hostPeerId: PeerId;
-	  }
-	| { type: 'match-loaded'; playerId?: PlayerId }
-	| { type: 'turn-update'; playerId: PlayerId; creatureId: number }
-	| { type: 'action-end'; action: 'skip' | 'delay'; playerId: PlayerId; creatureId: number }
-	| {
-			type: 'action-move';
-			target: { x: number; y: number };
-			playerId: PlayerId;
-			creatureId: number;
-	  }
-	| {
-			type: 'action-ability';
-			id: number;
-			target: AbilityTarget;
-			args: unknown[];
-			playerId: PlayerId;
-			creatureId: number;
-	  }
-	| { type: 'heartbeat'; timestamp: number; playerId: PlayerId };
+export type GameMessage = {
+	serverOrder?: number;
+} &
+	(
+		| { type: 'player-joined'; player: LobbyPlayer }
+		| { type: 'lobby-joined'; player: LobbyPlayer }
+		| { type: 'player-left'; playerId: PlayerId; player: LobbyPlayer }
+		| {
+				type: 'match-start';
+				config: GameConfig;
+				players: LobbyPlayer[];
+				host: PlayerId;
+				hostPeerId: PeerId;
+		  }
+		| { type: 'match-loaded'; playerId?: PlayerId }
+		| { type: 'turn-update'; playerId: PlayerId; creatureId: number }
+		| {
+				type: 'action-end';
+				action: 'skip' | 'delay';
+				playerId: PlayerId;
+				creatureId: number;
+		  }
+		| {
+				type: 'action-move';
+				target: { x: number; y: number };
+				playerId: PlayerId;
+				creatureId: number;
+		  }
+		| {
+				type: 'action-ability';
+				id: number;
+				target: AbilityTarget;
+				args: unknown[];
+				playerId: PlayerId;
+				creatureId: number;
+		  }
+		| { type: 'heartbeat'; timestamp: number; playerId: PlayerId }
+	);
 
 export interface TransportConnectOptions {
 	isHost?: boolean;
@@ -133,6 +142,18 @@ export function isActionMessage(message: GameMessage): boolean {
 		message.type === 'action-end' ||
 		message.type === 'action-move' ||
 		message.type === 'action-ability'
+	);
+}
+
+export function isSequencedGameMessage(message: GameMessage): boolean {
+	return (
+		message.type === 'match-start' ||
+		message.type === 'match-loaded' ||
+		message.type === 'turn-update' ||
+		message.type === 'action-end' ||
+		message.type === 'action-move' ||
+		message.type === 'action-ability' ||
+		message.type === 'player-left'
 	);
 }
 

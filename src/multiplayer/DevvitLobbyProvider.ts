@@ -9,7 +9,7 @@ import type {
 	LobbyState,
 	PeerId,
 } from './types';
-import { generateLobbyCode, isSelfAppliedActionMessage } from './types';
+import { generateLobbyCode, isSelfAppliedActionMessage, isSequencedGameMessage } from './types';
 
 interface CreateLobbyResponse {
 	code: LobbyCode;
@@ -24,6 +24,8 @@ export class DevvitLobbyProvider implements INetworkBackend {
 	private pendingJoinReject?: (error: Error) => void;
 	private isHostFlag = false;
 	private connected = false;
+	private nextServerOrder: number | null = null;
+	private pendingOrderedMessages = new Map<number, { message: GameMessage; peerId: PeerId }>();
 
 	constructor(transport?: DevvitTransport) {
 		this.transport = transport ?? new DevvitTransport({});
@@ -36,7 +38,7 @@ export class DevvitLobbyProvider implements INetworkBackend {
 		const res = await fetch(`/api/lobby`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ code: lobbyCode }),
+			body: JSON.stringify({ code: lobbyCode, config }),
 		});
 
 		if (!res.ok) {
@@ -112,6 +114,7 @@ export class DevvitLobbyProvider implements INetworkBackend {
 
 	leaveLobby(): void {
 		this.pendingJoinResolve = undefined;
+		this.resetServerOrdering();
 		this.transport.disconnect();
 
 		if (this.state.status !== 'ended') {
@@ -167,6 +170,15 @@ export class DevvitLobbyProvider implements INetworkBackend {
 	}
 
 	private handleTransportMessage(message: GameMessage, peerId: PeerId): void {
+		if (this.shouldSequenceMessage(message)) {
+			this.enqueueSequencedMessage(message, peerId);
+			return;
+		}
+
+		this.processTransportMessage(message, peerId);
+	}
+
+	private processTransportMessage(message: GameMessage, peerId: PeerId): void {
 		// In Devvit mode the server relays every message to ALL clients, including the
 		// sender. The acting client already applies action messages locally (e.g.
 		// Ability.animation -> animation2 -> activate -> player.summon for materialize),
@@ -207,6 +219,49 @@ export class DevvitLobbyProvider implements INetworkBackend {
 		}
 
 		this.gameMessageHandlers.forEach((handler) => handler(message));
+	}
+
+	private shouldSequenceMessage(message: GameMessage): boolean {
+		return message.serverOrder != null && isSequencedGameMessage(message);
+	}
+
+	private enqueueSequencedMessage(message: GameMessage, peerId: PeerId): void {
+		const serverOrder = message.serverOrder;
+
+		if (serverOrder == null) {
+			this.processTransportMessage(message, peerId);
+			return;
+		}
+
+		if (this.nextServerOrder == null) {
+			this.nextServerOrder = serverOrder;
+		}
+
+		if (serverOrder < this.nextServerOrder) {
+			return;
+		}
+
+		this.pendingOrderedMessages.set(serverOrder, { message, peerId });
+		this.flushSequencedMessages();
+	}
+
+	private flushSequencedMessages(): void {
+		while (this.nextServerOrder != null) {
+			const pending = this.pendingOrderedMessages.get(this.nextServerOrder);
+
+			if (!pending) {
+				return;
+			}
+
+			this.pendingOrderedMessages.delete(this.nextServerOrder);
+			this.processTransportMessage(pending.message, pending.peerId);
+			this.nextServerOrder += 1;
+		}
+	}
+
+	private resetServerOrdering(): void {
+		this.nextServerOrder = null;
+		this.pendingOrderedMessages.clear();
 	}
 
 	private handlePlayerJoined(player: LobbyPlayer, peerId: PeerId): void {
