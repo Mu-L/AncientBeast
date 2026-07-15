@@ -1959,8 +1959,16 @@ export default class Game {
 				});
 				break;
 			case 'ability': {
-				const args = $j.makeArray(o.args[1]);
+				// Reconstruct the live ability args. The recorded action stores
+				// `args` as everything AFTER the target (gamelog: `args.slice(1)`),
+				// so the full live arg array is `[target, ...o.args]`. This mirrors
+				// handleLobbyMessage's action-ability path; the previous
+				// `$j.makeArray(o.args[1])` reconstruction dropped `arg[1]` and all
+				// later args, breaking replay of multi-argument abilities.
 				const ability = this.activeCreature.abilities[o.id];
+				if (!ability) break;
+
+				const args = Array.isArray(o.args) ? [...o.args] : [];
 
 				if (o.target.type == 'hex') {
 					args.unshift(this.grid.hexes[o.target.y][o.target.x]);
@@ -1968,17 +1976,16 @@ export default class Game {
 						callback: opt.callback,
 						arg: args,
 					});
-				}
-
-				if (o.target.type == 'creature') {
-					args.unshift(this.creatures[o.target.crea]);
-					ability.animation2({
-						callback: opt.callback,
-						arg: args,
-					});
-				}
-
-				if (o.target.type == 'array') {
+				} else if (o.target.type == 'creature') {
+					const targetCreature = this.creatures[o.target.crea];
+					if (targetCreature) {
+						args.unshift(targetCreature);
+						ability.animation2({
+							callback: opt.callback,
+							arg: args,
+						});
+					}
+				} else if (o.target.type == 'array') {
 					const array = o.target.array.map((item) => this.grid.hexes[item.y][item.x]);
 
 					args.unshift(array);
