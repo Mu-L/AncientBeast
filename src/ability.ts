@@ -9,6 +9,7 @@ import * as arrayUtils from './utility/arrayUtils';
 import Game from './game';
 import { Player, ScoreEvent } from './player';
 import { Point } from './utility/pointfacade';
+import { getVisibilityAwareDelay } from './utility/time';
 
 /**
  * Ability Class
@@ -621,7 +622,7 @@ export class Ability {
 					game.soundsys.playSFX('sounds/swing2');
 					activateAbility();
 				}
-			}, animationData.delay);
+			}, getVisibilityAwareDelay(animationData.delay));
 
 			setTimeout(() => {
 				const queue = game.animationQueue.filter((item) => item != animId);
@@ -638,7 +639,7 @@ export class Ability {
 				}
 
 				game.animationQueue = queue;
-			}, animationData.duration);
+			}, getVisibilityAwareDelay(animationData.duration));
 		} else {
 			activateAbility();
 			if (game.animationQueue.length === 0) {

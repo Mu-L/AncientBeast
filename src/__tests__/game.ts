@@ -196,6 +196,39 @@ describe('Game reset lifecycle', () => {
 	});
 });
 
+describe('Game Phaser boot timing', () => {
+	beforeEach(() => {
+		jest.useFakeTimers();
+	});
+
+	afterEach(() => {
+		jest.useRealTimers();
+	});
+
+	test('whenPhaserBooted waits until the current Phaser instance exposes its loader', () => {
+		const onBooted = jest.fn();
+		const phaser = {
+			isBooted: false,
+			load: null,
+		} as unknown as Game['Phaser'];
+		const game = {
+			Phaser: phaser,
+			whenPhaserBooted: Game.prototype.whenPhaserBooted,
+		} as unknown as Game;
+
+		Game.prototype.whenPhaserBooted.call(game, phaser, onBooted);
+
+		expect(onBooted).not.toHaveBeenCalled();
+
+		(phaser as { isBooted: boolean; load: object | null }).isBooted = true;
+		(phaser as { isBooted: boolean; load: object | null }).load = {};
+		jest.runOnlyPendingTimers();
+
+		expect(onBooted).toHaveBeenCalledTimes(1);
+		expect(onBooted).toHaveBeenCalledWith(phaser);
+	});
+});
+
 describe('Game unload confirmation integration', () => {
 	test('confirmWindowUnload sets window.onbeforeunload (single registration) and updates active state', () => {
 		const addEventListenerSpy = jest.spyOn(window, 'addEventListener');
@@ -551,5 +584,299 @@ describe('Game unload confirmation integration', () => {
 		addEventListenerSpy.mockRestore();
 		window.onbeforeunload = originalOnBeforeUnload;
 		process.env.NODE_ENV = originalNodeEnv;
+	});
+});
+
+describe('Game multiplayer turn ownership guard', () => {
+	// Regression coverage for turns desyncing between Devvit 1v1 players:
+	// automatic turn-ending triggers (turn timer expiry, frozen/dizzy/dazzled/
+	// BRB status in Creature.activate()) run locally on every client. Without
+	// gating them by which player actually owns the active creature, BOTH
+	// clients could independently skip/delay and broadcast for the same turn
+	// transition, double-advancing the queue on whichever client applies both
+	// its own local skip and the echoed remote one.
+	const makeSkipDelayMockGame = (overrides: Record<string, unknown> = {}): Game =>
+		({
+			isOtherPlayersTurn: Game.prototype['isOtherPlayersTurn' as keyof Game],
+			multiplayer: true,
+			turnThrottle: false,
+			pauseTime: 0,
+			creatures: [],
+			activeCreature: {
+				player: { controller: 'human', startTime: new Date() },
+				canWait: true,
+				id: 1,
+			},
+			queue: { queue: [1, 2], isCurrentEmpty: jest.fn(() => false) },
+			lobby: {
+				isMyTurn: jest.fn(() => false),
+				getLocalPlayer: jest.fn(() => ({ playerId: 'p1', playerIndex: 0 })),
+				sendAction: jest.fn(),
+			},
+			UI: {
+				btnSkipTurn: { changeState: jest.fn() },
+				btnDelay: { changeState: jest.fn() },
+			},
+			...overrides,
+		} as unknown as Game);
+
+	beforeEach(() => {
+		jest.useFakeTimers();
+	});
+
+	afterEach(() => {
+		jest.useRealTimers();
+	});
+
+	test('skipTurn is ignored when the active creature belongs to the other player', () => {
+		const game = makeSkipDelayMockGame();
+
+		Game.prototype.skipTurn.call(game);
+
+		expect(game.lobby.sendAction as jest.Mock).not.toHaveBeenCalled();
+		expect(game.UI.btnSkipTurn.changeState as jest.Mock).not.toHaveBeenCalled();
+	});
+
+	test("skipTurn proceeds and broadcasts when it is the local player's turn", () => {
+		const game = makeSkipDelayMockGame({
+			activeCreature: {
+				player: { controller: 'human', id: 0, startTime: new Date() },
+				canWait: true,
+				id: 1,
+				facePlayerDefault: jest.fn(),
+				deactivate: jest.fn(),
+			},
+			lobby: {
+				isMyTurn: jest.fn(() => true),
+				getLocalPlayer: jest.fn(() => ({ playerId: 'p1', playerIndex: 0 })),
+				sendAction: jest.fn(),
+			},
+			nextCreature: jest.fn(),
+		});
+
+		Game.prototype.skipTurn.call(game);
+
+		expect(game.lobby.sendAction as jest.Mock).toHaveBeenCalledWith(
+			expect.objectContaining({ type: 'action-end', action: 'skip' }),
+		);
+	});
+
+	test('skipTurn is not blocked for a bot-controlled creature even if isMyTurn is false', () => {
+		const game = makeSkipDelayMockGame({
+			activeCreature: {
+				player: { controller: 'bot', id: 1, startTime: new Date() },
+				canWait: true,
+				id: 1,
+				facePlayerDefault: jest.fn(),
+				deactivate: jest.fn(),
+			},
+			nextCreature: jest.fn(),
+		});
+
+		Game.prototype.skipTurn.call(game);
+
+		expect(game.lobby.sendAction as jest.Mock).toHaveBeenCalledWith(
+			expect.objectContaining({ type: 'action-end', action: 'skip' }),
+		);
+	});
+
+	test('skipTurn applies a remote action-end message regardless of local turn ownership', () => {
+		const game = makeSkipDelayMockGame({
+			activeCreature: {
+				player: { controller: 'human', id: 1, startTime: new Date() },
+				canWait: true,
+				id: 1,
+				facePlayerDefault: jest.fn(),
+				deactivate: jest.fn(),
+			},
+			nextCreature: jest.fn(),
+		});
+
+		Game.prototype.skipTurn.call(game, undefined, true);
+
+		expect(game.lobby.sendAction as jest.Mock).not.toHaveBeenCalled();
+		expect(game.nextCreature as jest.Mock).toHaveBeenCalledWith(true);
+	});
+
+	test('delayCreature is ignored when the active creature belongs to the other player', () => {
+		const game = makeSkipDelayMockGame();
+
+		Game.prototype.delayCreature.call(game);
+
+		expect(game.lobby.sendAction as jest.Mock).not.toHaveBeenCalled();
+	});
+
+	test("delayCreature proceeds and broadcasts when it is the local player's turn", () => {
+		const game = makeSkipDelayMockGame({
+			activeCreature: {
+				player: { controller: 'human', id: 0, startTime: new Date() },
+				canWait: true,
+				id: 1,
+				wait: jest.fn(),
+			},
+			lobby: {
+				isMyTurn: jest.fn(() => true),
+				getLocalPlayer: jest.fn(() => ({ playerId: 'p1', playerIndex: 0 })),
+				sendAction: jest.fn(),
+			},
+			nextCreature: jest.fn(),
+		});
+
+		Game.prototype.delayCreature.call(game);
+
+		expect(game.lobby.sendAction as jest.Mock).toHaveBeenCalledWith(
+			expect.objectContaining({ type: 'action-end', action: 'delay' }),
+		);
+	});
+});
+
+describe('Game nextCreature turn-update broadcast ownership', () => {
+	beforeEach(() => {
+		jest.useFakeTimers();
+	});
+
+	afterEach(() => {
+		jest.useRealTimers();
+	});
+
+	const makeNextCreatureMockGame = (overrides: Record<string, unknown> = {}): Game =>
+		({
+			UI: {
+				closeDash: jest.fn(),
+				btnToggleDash: { changeState: jest.fn() },
+				updateActivebox: jest.fn(),
+				updateQueueDisplay: jest.fn(),
+				_abilityPanelAnimating: false,
+			},
+			grid: { clearAllXray: jest.fn(), suppressNextHoverRefresh: false },
+			gameState: 'playing',
+			stopTimer: jest.fn(),
+			queue: {
+				isCurrentEmpty: jest.fn(() => false),
+				queue: [
+					{
+						id: 2,
+						player: { id: 1 },
+						activate: jest.fn(),
+					},
+				],
+			},
+			turn: 1,
+			activeCreature: {
+				id: 1,
+				dead: false,
+				player: { id: 0 },
+				updateHealth: jest.fn(),
+			},
+			soundsys: { playHeartBeat: jest.fn() },
+			log: jest.fn(),
+			signals: { creature: { dispatch: jest.fn() } },
+			multiplayer: true,
+			playersReady: true,
+			lobby: {
+				getLocalPlayer: jest.fn(() => ({ playerId: 'local', playerIndex: 0 })),
+				sendAction: jest.fn(),
+			},
+			updateQueueDisplay: jest.fn(),
+			...overrides,
+		} as unknown as Game);
+
+	test('does not broadcast turn-update when the outgoing creature belonged to the other player', () => {
+		// Simulates a locally-replayed remote ability that kills the opponent's
+		// own active creature (Creature.die() calling nextCreature() with no
+		// `remote` flag threaded through). This client must not also broadcast
+		// its own turn-update for a transition it doesn't own.
+		const game = makeNextCreatureMockGame({
+			activeCreature: {
+				id: 1,
+				dead: false,
+				player: { id: 1 }, // owned by the OTHER player (local playerIndex is 0)
+				updateHealth: jest.fn(),
+			},
+		});
+
+		Game.prototype.nextCreature.call(game);
+		jest.runAllTimers();
+
+		expect(game.lobby.sendAction as jest.Mock).not.toHaveBeenCalled();
+	});
+
+	test('broadcasts turn-update when the outgoing creature belonged to the local player', () => {
+		const game = makeNextCreatureMockGame();
+
+		Game.prototype.nextCreature.call(game);
+		jest.runAllTimers();
+
+		expect(game.lobby.sendAction as jest.Mock).toHaveBeenCalledWith(
+			expect.objectContaining({ type: 'turn-update', creatureId: 2, turn: 1 }),
+		);
+	});
+});
+
+describe('Game.applyMoveRecord — shared by action() replay and live multiplayer relay', () => {
+	// Regression coverage for movement desyncing: this is the single place that
+	// turns a recorded/relayed "move" action into a real Creature.moveTo() call,
+	// used both by action() (saved gamelog replay) and by
+	// handleLobbyMessage()'s 'action-move' case (live Devvit relay). It must
+	// replay the exact recorded path — resolved against THIS client's own
+	// grid.hexes — rather than letting moveTo() recalculate pathfinding, which
+	// can diverge between clients on drifted grid state.
+	const makeMoveRecordMockGame = (overrides: Record<string, unknown> = {}): Game =>
+		({
+			grid: {
+				hexes: Array.from({ length: 3 }, (_, y) => Array.from({ length: 3 }, (_, x) => ({ x, y }))),
+			},
+			activeCreature: {
+				moveTo: jest.fn(),
+			},
+			...overrides,
+		} as unknown as Game);
+
+	test("resolves a recorded path into this client's own live Hex instances", () => {
+		const game = makeMoveRecordMockGame();
+		const callback = jest.fn();
+
+		(
+			Game.prototype as unknown as {
+				applyMoveRecord: (
+					record: { target: { x: number; y: number }; path?: Array<{ x: number; y: number }> },
+					cb?: () => void,
+				) => void;
+			}
+		).applyMoveRecord.call(
+			game,
+			{
+				target: { x: 2, y: 1 },
+				path: [
+					{ x: 1, y: 1 },
+					{ x: 2, y: 1 },
+				],
+			},
+			callback,
+		);
+
+		const moveTo = game.activeCreature.moveTo as jest.Mock;
+		expect(moveTo).toHaveBeenCalledTimes(1);
+		const [hexArg, optsArg] = moveTo.mock.calls[0] as [
+			unknown,
+			{ path?: unknown[]; callback: unknown },
+		];
+		expect(hexArg).toBe(game.grid.hexes[1][2]);
+		expect(optsArg.path).toEqual([game.grid.hexes[1][1], game.grid.hexes[1][2]]);
+		expect(optsArg.callback).toBe(callback);
+	});
+
+	test('falls back to undefined path (letting moveTo recalculate) when no path was recorded', () => {
+		const game = makeMoveRecordMockGame();
+
+		(
+			Game.prototype as unknown as {
+				applyMoveRecord: (record: { target: { x: number; y: number } }, cb?: () => void) => void;
+			}
+		).applyMoveRecord.call(game, { target: { x: 0, y: 0 } });
+
+		const moveTo = game.activeCreature.moveTo as jest.Mock;
+		const [, optsArg] = moveTo.mock.calls[0] as [unknown, { path?: unknown[] }];
+		expect(optsArg.path).toBeUndefined();
 	});
 });

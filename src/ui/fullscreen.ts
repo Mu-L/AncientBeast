@@ -13,6 +13,14 @@ export class Fullscreen {
 	}
 
 	async toggle() {
+		// The Fullscreen API is unreliable inside Reddit's webview: the embedding
+		// iframe doesn't grant the Fullscreen permission, so requestFullscreen()
+		// rejects with "Fullscreen request denied". The button is visually
+		// disabled there (see `body.devvit-mode .button#fullscreen` in styles.less),
+		// so skip the attempt entirely instead of throwing.
+		if (document.body.classList.contains('devvit-mode') || !document.fullscreenEnabled) {
+			return;
+		}
 		try {
 			if (document.fullscreenElement) {
 				await document.exitFullscreen();

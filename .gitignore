@@ -1,6 +1,7 @@
 ### Ancient Beast ###
 # Generated files
 deploy/
+dist/
 
 # Generated list of assets
 assets/index.js

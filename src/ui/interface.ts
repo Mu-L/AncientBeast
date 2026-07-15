@@ -24,7 +24,7 @@ import { CreatureType } from '../data/types';
 import { getAvatarSet } from '../style/avatar-styles';
 import { applyBuffDebuffStyle } from './buffs-debuffs';
 import { getSummonCandidates } from '../utility/summon-candidates';
-import { OpenCollectiveBanner } from './open-collective-banner';
+import { OpenCollectiveBanner, isThirdPartyContentBlocked } from './open-collective-banner';
 
 const SECRET_VIEW_ID = 'ab-secret-view';
 const GAME_IN_PROGRESS_UNLOAD_CONFIRMATION =
@@ -620,6 +620,7 @@ export class UI {
 				this.closeDash();
 			},
 			isViewOpen: () => this.dashopen,
+			hidden: isThirdPartyContentBlocked(),
 		});
 		this.scoreboardOpenCollectiveBanner = new OpenCollectiveBanner({
 			bannerSelector: '#opencollective_banner_scoreboard',
@@ -627,6 +628,7 @@ export class UI {
 				this.closeScoreboard();
 			},
 			isViewOpen: () => !this.$scoreboard.hasClass('hide'),
+			hidden: isThirdPartyContentBlocked(),
 		});
 		this.musicPlayerOpenCollectiveBanner = new OpenCollectiveBanner({
 			bannerSelector: '#opencollective_banner_musicplayer',
@@ -634,6 +636,7 @@ export class UI {
 				this.toggleMusicPlayer(false);
 			},
 			isViewOpen: () => !$j('#musicplayerwrapper').hasClass('hide'),
+			hidden: isThirdPartyContentBlocked(),
 		});
 		this.dashOpenCollectiveBanner.init();
 		this.scoreboardOpenCollectiveBanner.init();
@@ -1457,6 +1460,11 @@ export class UI {
 		this.dashopen = false;
 
 		this.glowInterval = setInterval(() => {
+			// Guard against a torn-down game (e.g. between matches) so a stray tick
+			// can't throw "can't access property 'allhexes', e.grid is null".
+			if (!game.grid || !game.grid.allhexes) {
+				return;
+			}
 			const opa =
 				0.5 +
 				// eslint-disable-next-line prettier/prettier
@@ -2218,7 +2226,7 @@ export class UI {
 
 		this.$grid
 			.find('.vignette') // Vignettes class
-			.removeClass('active dead queued notsummonable')
+			.removeClass('active dead queued notsummonable materialized unmaterialized')
 			.addClass('locked');
 
 		$j('#tabwrapper').show();
@@ -2247,7 +2255,7 @@ export class UI {
 		game.players[id].creatures.forEach((creature) => {
 			const $crea = this.$grid.find(".vignette[creature='" + creature.type + "']");
 
-			$crea.removeClass('notsummonable');
+			$crea.removeClass('locked notsummonable');
 			if (creature.dead === true) {
 				$crea.addClass('dead');
 			} else {
@@ -3148,7 +3156,8 @@ export class UI {
 			creature = game.activeCreature,
 			$abilitiesButtons = $j('#abilities .ability');
 
-		this.active = !game.multiplayer || !!game.lobby?.isMyTurn();
+		const localPlayer = game.lobby?.getLocalPlayer();
+		this.active = !game.multiplayer || !game.lobby || !localPlayer || game.lobby.isMyTurn();
 
 		// Set/reset cursor based on turn state
 		if (!this.active) {

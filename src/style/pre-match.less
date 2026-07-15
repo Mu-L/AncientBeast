@@ -723,3 +723,46 @@ a {
 		border: none !important;
 	}
 }
+
+#devvitLobby {
+	display: none;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+
+	.lobby-row {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.devvit-queue-status {
+		font-size: 0.95rem;
+		color: #ccc;
+		min-height: 1.2em;
+	}
+
+	.devvit-matches-counter {
+		font-size: 0.85rem;
+		color: #999;
+	}
+}
+
+body.devvit-mode {
+	#pre-match .setupFrame,
+	#gameSetupContainer > #gameTitle,
+	#gameSetupContainer > #websiteButton,
+	#gameSetupContainer > #contribute,
+	#gameSetupContainer > #version,
+	#gameSetupContainer > #discord {
+		display: none !important;
+	}
+
+	#pre-match #createdLobby {
+		display: none !important;
+	}
+
+	#devvitLobby {
+		display: flex;
+	}
+}

@@ -16,12 +16,15 @@ import 'p2';
 // @ts-expect-error: Phaser CE has no official type declarations
 import Phaser, { Signal } from 'phaser';
 import { LobbyClient } from './multiplayer';
+import { createLobbyProvider } from './multiplayer/provider';
 import type {
 	GameConfig as MultiplayerGameConfig,
 	GameMessage,
 	LobbySession,
 	LobbyState,
 } from './multiplayer';
+import type { AuthoritativeState, Intent } from './multiplayer/authoritative';
+import { getVisibilityAwareDelay, sleep } from './utility/time';
 import { DEBUG_DISABLE_GAME_STATUS_CONSOLE_LOG, DEBUG_DISABLE_MUSIC } from './debug';
 import { Point, configure as configurePointFacade } from './utility/pointfacade';
 import { pretty as version } from './utility/version';
@@ -33,6 +36,7 @@ import { Drop } from './drop';
 import { CreatureType, Realm, UnitData } from './data/types';
 import { setAudioMode } from './sound/soundsys';
 import BotController from './bot';
+import { locationPaths } from '../assets/index';
 
 /* eslint-disable prefer-rest-params */
 
@@ -122,10 +126,19 @@ export default class Game {
 	configData: Partial<GameConfig>;
 	match: object;
 	multiplayer: boolean;
+	/**
+	 * Server-authoritative mode toggle. When true, the client sends `Intent`s
+	 * (inputs) to the authoritative processor and applies them via `applyIntent`
+	 * when received (no optimistic local application). This eliminates the
+	 * relay desync bugs (e.g., Fiery Touch/Claw not syncing). Kept ON by
+	 * default; the relay code path remains in the tree as a fallback if needed.
+	 */
+	authoritative: boolean;
 	lobby: LobbyClient | null;
 	lobbyCode: string;
 	lobbyState: LobbyState | null;
 	onLobbyUpdate: ((lobby: LobbyState) => void) | null;
+	botOpponentIds: Set<number>;
 	realms: Realm[];
 	availableMusic = [];
 	inputMethod = 'Mouse';
@@ -183,25 +196,106 @@ export default class Game {
 		this.Phaser = new Phaser.Game(1920, 1080, renderer, 'combatwrapper', {
 			update: this.phaserUpdate.bind(this),
 			render: this.phaserRender.bind(this),
+			// Browsers fully suspend native requestAnimationFrame (not just throttle it)
+			// once a tab is hidden/backgrounded. Phaser's TweenManager (movement/ability
+			// animations) and its whole update loop run off that rAF, so a backgrounded
+			// client's creature moves/abilities would completely freeze mid-animation —
+			// never dispatching movementComplete/activateAbility, never advancing the
+			// turn — until the tab regains focus. That is the "moves desync between
+			// tabs" symptom seen when testing two clients side-by-side with one
+			// unfocused. Forcing Phaser onto a setTimeout-driven loop in multiplayer
+			// keeps it ticking (just throttled, like our other multiplayer timers)
+			// instead of fully stopping while backgrounded.
+			forceSetTimeOut: this.multiplayer,
 		});
 		// Note: Scale manager configuration happens in setup() after Phaser is ready
 	}
 
+	whenPhaserBooted(phaser: Phaser.Game | null, onBooted: (phaser: Phaser.Game) => void) {
+		if (!phaser) {
+			return;
+		}
+
+		if (phaser === this.Phaser && phaser.isBooted && phaser.load) {
+			onBooted(phaser);
+			return;
+		}
+
+		window.setTimeout(() => {
+			if (phaser !== this.Phaser) {
+				return;
+			}
+
+			this.whenPhaserBooted(phaser, onBooted);
+		}, 0);
+	}
+
 	destroyPhaser() {
 		if (this.Phaser) {
+			const phaser = this.Phaser;
+
+			// Kill client-side timers tied to the old game/UI BEFORE nulling them,
+			// otherwise they keep firing on the torn-down instance and throw
+			// "grid is null" (UI glowInterval), "this.UI is null" / "updateTimer"
+			// (game checkTime via timeInterval), etc. See destroyPhaser's notes on
+			// the dead-Phaser rAF loop below.
+			if (this.UI) {
+				if (this.UI.glowInterval != null) {
+					clearInterval(this.UI.glowInterval);
+					this.UI.glowInterval = undefined;
+				}
+				this.UI = null;
+			}
+			if (this.timeInterval != null) {
+				clearInterval(this.timeInterval);
+				this.timeInterval = undefined;
+			}
+			if (this.windowResizeTimeout != null) {
+				clearTimeout(this.windowResizeTimeout);
+				this.windowResizeTimeout = undefined;
+			}
+
+			// Detach pending async callbacks before destroying.
+			// Phaser.Game.destroy() stops the rAF loop but leaves the Cache's
+			// `onReady` signal and the Loader's completion signals registered.
+			// If createPhaser() is called again before those async callbacks
+			// (default/missing texture decodes, asset loads) settle, they fire
+			// on the already-destroyed game, calling raf.start() -> Game.update()
+			// -> this.time.update() where `this.time` is now null. This throws
+			// "can't access property 'update', this.time is null" (phaser-split.js
+			// Game.update, line ~14835). Clearing them prevents a dead game from
+			// starting its loop or running finishLoading/loadFinish after death.
+			if (phaser.cache && phaser.cache.onReady && phaser.cache.onReady.removeAll) {
+				phaser.cache.onReady.removeAll();
+			}
+			if (phaser.load) {
+				if (phaser.load.onLoadComplete && phaser.load.onLoadComplete.removeAll) {
+					phaser.load.onLoadComplete.removeAll();
+				}
+				if (phaser.load.onFileComplete && phaser.load.onFileComplete.removeAll) {
+					phaser.load.onFileComplete.removeAll();
+				}
+			}
+
 			// IMPORTANT: Remove the canvas element from the DOM before destroying Phaser
 			// Phaser.destroy() does NOT remove the canvas, so we'd end up duplicated canvases
-			const canvas = this.Phaser.canvas;
+			const canvas = phaser.canvas;
 			if (canvas && canvas.parentNode) {
 				canvas.parentNode.removeChild(canvas);
 			}
 
 			// Destroy Phaser with cleanup to avoid memory leaks
 			// Parameters: clearWorld=true (remove game objects), clearCache=false
-			this.Phaser.destroy(true, false);
+			// Stop the rAF loop first so a pending frame can't fire Game.update()
+			// (this.time is null) on the dying instance after destroy() returns.
+			if (phaser.raf && typeof phaser.raf.stop === 'function') {
+				phaser.raf.stop();
+			}
+			phaser.destroy(true, false);
 			this.Phaser = null;
 
-			// Reset game state
+			// Reset game state (this.UI is already nulled above when its interval
+			// was cleared, kept here for clarity)
 			this.grid = null;
 			this.UI = null;
 			this.gameState = 'initialized';
@@ -238,10 +332,12 @@ export default class Game {
 		this.configData = {};
 		this.match = {};
 		this.multiplayer = false;
+		this.authoritative = true;
 		this.lobby = null;
 		this.lobbyCode = '';
 		this.lobbyState = null;
 		this.onLobbyUpdate = null;
+		this.botOpponentIds = new Set<number>();
 		this.realms = ['-', 'A', 'E', 'G', 'L', 'P', 'S', 'W'];
 		this.availableMusic = [];
 		this.inputMethod = 'Mouse';
@@ -259,8 +355,10 @@ export default class Game {
 			infiniteEnergy: false,
 		};
 
-		// Phaser
-		this.createPhaser();
+		// Phaser is created lazily in loadGame() on the first match start.
+		// Creating it here (at app boot) was redundant: it was always destroyed
+		// and rebuilt moments later by loadGame(), which also triggered a crash
+		// when a stale instance's pending async callbacks fired after destruction.
 
 		// Messages
 		// TODO: Move strings to external file in order to be able to support translations
@@ -390,6 +488,18 @@ export default class Game {
 		// eslint-disable-next-line @typescript-eslint/no-empty-function
 		onLoadCompleteFn = () => {},
 	) {
+		// Guard against a re-entrant load while one is already initializing (e.g. a
+		// match-start echo arriving after the host already began loading, or a stray
+		// second match-start delivery). Without this, loadGame() can run twice in the
+		// same match, spawning a second Phaser instance whose rAF loop outlives the
+		// first and throws "this.time is null", and leaving one client's setup
+		// half-initialized. We only block an *in-progress* load ('loading'); a fresh
+		// match is always allowed (the previous one is torn down by createPhaser's
+		// destroyPhaser), so we never block a legitimate rematch.
+		if (this.gameState === 'loading') {
+			return;
+		}
+
 		// Create a fresh Phaser instance for this game session
 		// (createPhaser safely destroys any existing Phaser first to prevent duplicates)
 		this.createPhaser();
@@ -416,11 +526,30 @@ export default class Game {
 		this.soundsys = new SoundSys({ paths: soundPaths });
 		this.musicPlayer = this.soundsys.musicPlayer;
 
-		this.Phaser.load.onFileComplete.add(this.loadFinish, this);
-		this.Phaser.load.onLoadComplete.add(this.finishLoading, this);
-		this.Phaser.load.onLoadComplete.add(onLoadCompleteFn, this);
+		this.whenPhaserBooted(this.Phaser, (phaser) => {
+			// Belt-and-suspenders: Phaser sets `isBooted` slightly before the Loader
+			// (`load`) is created during boot, so a stale/cached build can call this
+			// with `phaser.load` still null and throw "can't access property
+			// 'onFileComplete', this.Phaser.load is null". Re-wait rather than crash.
+			if (!phaser.load) {
+				this.whenPhaserBooted(phaser, () => this.startAssetLoad(phaser, onLoadCompleteFn));
+				return;
+			}
+			this.startAssetLoad(phaser, onLoadCompleteFn);
+		});
+	}
 
-		const assetsRaw = assetsUse(this.Phaser);
+	/** Wire up loader completion hooks and queue the game's asset downloads. */
+	private startAssetLoad(phaser: Phaser.Game, onLoadCompleteFn: () => void): void {
+		if (!phaser.load) {
+			return;
+		}
+
+		phaser.load.onFileComplete.add(this.loadFinish, this);
+		phaser.load.onLoadComplete.add(this.finishLoading, this);
+		phaser.load.onLoadComplete.add(onLoadCompleteFn, this);
+
+		const assetsRaw = assetsUse(phaser);
 		const assets = Array.isArray(assetsRaw) ? assetsRaw : [];
 
 		console.log('[DEBUG] Safe assets list:', assets);
@@ -430,10 +559,15 @@ export default class Game {
 		});
 
 		// Background
-		this.Phaser.load.image('background', getUrl('locations/' + this.background_image));
+		const backgroundImage =
+			this.background_image ||
+			this.configData.background_image ||
+			this.configData.combatLocation ||
+			locationPaths[0];
+		phaser.load.image('background', getUrl('locations/' + backgroundImage));
 
 		// Branding
-		this.Phaser.load.image('AncientBeastLogo', getUrl('interface/AncientBeast'));
+		phaser.load.image('AncientBeastLogo', getUrl('interface/AncientBeast'));
 
 		// Load artwork, shout and avatar for each unit
 		this.loadUnitData(unitData);
@@ -615,6 +749,15 @@ export default class Game {
 		$j('#matchMaking').hide();
 
 		this.players = [];
+		// Drop any leftover creatures/traps/drops/effects from a previous match.
+		// createPhaser() above destroyed their Phaser sprites (clearWorld), so these
+		// stale objects would otherwise carry null sprite internals (`this._tweens is
+		// null` in resetBounce) into this setup and crash when nextCreature fires the
+		// onCloseDash signal that bounces every creature on the board.
+		this.creatures = [];
+		this.traps = [];
+		this.drops = [];
+		this.effects = [];
 		for (let i = 0; i < gameMode; i++) {
 			const player = new Player(i as PlayerID, this);
 			this.players.push(player);
@@ -622,6 +765,9 @@ export default class Game {
 				player.controller = 'human';
 			} else {
 				player.controller = this.configData.players?.includes(player.id) ? 'human' : 'bot';
+			}
+			if (this.botOpponentIds.has(player.id)) {
+				player.controller = 'bot';
 			}
 			player.avatar = getDarkPriestAvatarUrl(player);
 			// Initialize players' starting positions
@@ -729,7 +875,7 @@ export default class Game {
 
 	async createLobby(config: MultiplayerGameConfig): Promise<LobbySession> {
 		if (!this.lobby) {
-			this.lobby = new LobbyClient(this);
+			this.lobby = new LobbyClient(this, createLobbyProvider());
 		}
 		const session = await this.lobby.createMatch(config);
 		this.lobbyCode = session.code;
@@ -739,7 +885,7 @@ export default class Game {
 
 	async joinLobbyByCode(code: string): Promise<LobbySession> {
 		if (!this.lobby) {
-			this.lobby = new LobbyClient(this);
+			this.lobby = new LobbyClient(this, createLobbyProvider());
 		}
 		const session = await this.lobby.joinMatch(code);
 		this.lobbyCode = code;
@@ -747,12 +893,12 @@ export default class Game {
 		return session;
 	}
 
-	startMultiplayerMatch(): void {
+	startMultiplayerMatch(configOverride?: Record<string, unknown>): void {
 		if (!this.lobby || !this.lobby.isHost()) {
 			return;
 		}
 		const lobbyState = this.lobby.getLobbyState();
-		const config = lobbyState.config;
+		const config = (configOverride ?? lobbyState.config) as GameConfig;
 		this.lobby.markMatchStarted();
 		this.lobby.sendAction({
 			type: 'match-start',
@@ -766,17 +912,72 @@ export default class Game {
 	}
 
 	handleLobbyMessage(message: GameMessage): void {
+		if (message.type === 'intent') {
+			const intent = message.intent;
+			switch (intent.kind) {
+				case 'skip':
+					this.action({ action: 'skip' }, { callback() {} });
+					break;
+				case 'delay':
+					this.action({ action: 'delay' }, { callback() {} });
+					break;
+				case 'move':
+					this.action({ action: 'move', target: intent.target, path: intent.path }, { callback() {} });
+					break;
+				case 'ability':
+					this.action({ action: 'ability', id: intent.id, target: intent.target, args: intent.args }, { callback() {} });
+					break;
+			}
+			return;
+		}
 		if (message.type === 'match-start') {
+			// Idempotency guard: the host calls loadGame() directly in
+			// startMultiplayerMatch() and ALSO receives its own echoed
+			// match-start over the transport, so this handler can fire twice
+			// for the same match. A redundant match-start can also arrive from
+			// redelivery while loading is still in flight. If a match is already
+			// loading or in progress, ignore the duplicate so we don't destroy
+			// and recreate Phaser (which can start a dead game's loop and throw).
+			// A brand-new match after a previous one ended (gameState 'ended')
+			// is still allowed through.
+			if (
+				this.gameState === 'loading' ||
+				this.gameState === 'loaded' ||
+				this.gameState === 'playing'
+			) {
+				return;
+			}
 			this.multiplayer = true;
+			this.botOpponentIds = new Set(
+				(message.players || [])
+					.filter((player) => player.isBot)
+					.map((player) => player.playerIndex),
+			);
 			this.loadGame(message.config as Partial<GameConfig>, true);
 			return;
 		}
 		if (message.type === 'match-loaded') {
 			return;
 		}
+		if (message.type === 'sync-snapshot') {
+			// Devvit snapshots currently carry only config, not full board state.
+			// Reloading an active match here desynchronizes clients (different maps,
+			// missing priests, repeated round logs). Only allow bootstrap-time use.
+			if (this.gameState === 'initialized' || this.gameState === 'ended') {
+				this.multiplayer = true;
+				this.loadGame(message.config as Partial<GameConfig>, true);
+			}
+			return;
+		}
 		if (message.type === 'turn-update') {
+			if (message.turn > this.turn) {
+				this.turn = message.turn;
+			}
 			const creature = this.creatures[message.creatureId];
 			if (creature) {
+				if (this.activeCreature?.id === creature.id) {
+					return;
+				}
 				this.activeCreature = creature;
 				creature.activate();
 				this.UI.updateActivebox();
@@ -801,11 +1002,13 @@ export default class Game {
 			const creature = this.creatures[message.creatureId];
 			if (creature) {
 				this.activeCreature = creature;
-				const hex = this.grid.hexes[message.target.y][message.target.x];
-				creature.moveTo(hex, {
-					callback: () => {
-						creature.queryMove();
-					},
+				// Shares applyMoveRecord() with action() (the saved-log replay
+				// dispatcher) instead of a second hand-rolled implementation of
+				// "apply a move action" — one canonical code path for both, so fixes
+				// (like replaying the exact recorded path) can't drift out of sync
+				// between live multiplayer relay and file replay.
+				this.applyMoveRecord({ target: message.target, path: message.path }, () => {
+					creature.queryMove();
 				});
 			}
 			return;
@@ -858,13 +1061,21 @@ export default class Game {
 		}
 	}
 
-	sendMultiplayerMove(target: { x: number; y: number }): void {
+	sendMultiplayerMove(
+		target: { x: number; y: number },
+		path?: Array<{ x: number; y: number }>,
+	): void {
 		if (!this.multiplayer || !this.lobby || !this.activeCreature) {
+			return;
+		}
+		if (this.authoritative) {
+			this.sendIntent({ kind: 'move', target, path } as Intent);
 			return;
 		}
 		this.lobby.sendAction({
 			type: 'action-move',
 			target,
+			path,
 			playerId: this.lobby.getLocalPlayer()?.playerId || '',
 			creatureId: this.activeCreature.id,
 		});
@@ -884,6 +1095,20 @@ export default class Game {
 		if (!this.multiplayer || !this.lobby || !this.activeCreature) {
 			return;
 		}
+		// Server-authoritative mode: emit an `Intent` (input) instead of a relay
+		// action message. The acting client does NOT apply locally here — the
+		// processor applies it through the engine and broadcasts the resulting
+		// authoritative state, which this client adopts (see adoptAuthoritativeState).
+		// The relay path below stays as the safeguard when authoritative is off.
+		if (this.authoritative) {
+			this.sendIntent({
+				kind: 'ability',
+				id: params.id,
+				target: params.target as any,
+				args: params.args,
+			} as Intent);
+			return;
+		}
 		this.lobby.sendAction({
 			type: 'action-ability',
 			id: params.id,
@@ -892,6 +1117,80 @@ export default class Game {
 			playerId: this.lobby.getLocalPlayer()?.playerId || '',
 			creatureId: this.activeCreature.id,
 		});
+	}
+
+	/** Send a player input to the authoritative server (transport-agnostic). */
+	sendIntent(intent: Intent): void {
+		if (!this.lobby) {
+			return;
+		}
+		void this.lobby.sendIntent(intent);
+	}
+
+	/**
+	 * Adopt an authoritative state snapshot as the single source of truth.
+	 * Reconciles creature positions/health/energy/dead/status, the queue order,
+	 * the active creature, turn/round, and player scores to match the server.
+	 * Used in server-authoritative mode so every client converges on identical
+	 * state regardless of its own (now-irrelevant) local simulation.
+	 */
+	adoptAuthoritativeState(state: AuthoritativeState): void {
+		// Best-effort reconciliation against the real `Game`/`Creature` shapes,
+		// which are stricter than the serializable snapshot. Cast to `any` so the
+		// authoritative state can drive the live game without fighting internal
+		// types; the fields we set are the canonical ones `serializeState` reads.
+		const g = this as any;
+		for (const snap of state.creatures) {
+			const creature = g.creatures[snap.id];
+			if (!creature) {
+				continue;
+			}
+			creature.x = snap.x;
+			creature.y = snap.y;
+			creature.health = snap.health;
+			if (creature.stats) {
+				creature.stats.health = snap.maxHealth;
+				creature.stats.energy = snap.maxEnergy;
+			}
+			creature.energy = snap.energy;
+			creature.dead = snap.dead;
+			if ('isVaporized' in creature) creature.isVaporized = snap.vaporized;
+			creature.remainingMove = snap.remainingMove;
+			if (creature.status) {
+				creature.status.frozen = snap.status.frozen;
+				creature.status.dizzy = snap.status.dizzy;
+				creature.status.cryostasis = snap.status.cryostasis;
+			}
+			if (snap.dead && !creature.dead && typeof creature.die === 'function') {
+				try {
+					creature.die(true);
+				} catch {
+					/* best-effort; state fields already set above */
+				}
+			}
+			const sprite = creature.sprite;
+			if (sprite && sprite.position && typeof sprite.position.set === 'function') {
+				try {
+					sprite.position.set(snap.x, snap.y);
+				} catch {
+					/* non-fatal */
+				}
+			}
+		}
+
+		g.turn = state.turn;
+		g.round = state.round;
+		g.gameState = state.gameState;
+		g.activeCreature =
+			state.activeCreatureId != null ? g.creatures[state.activeCreatureId] : g.activeCreature;
+
+		for (const playerSnap of state.players) {
+			const player = g.players[playerSnap.playerIndex];
+			const score = player && player.score;
+			if (score && typeof score.setTotal === 'function') {
+				score.setTotal(playerSnap.score);
+			}
+		}
 	}
 	/**
 	 * Resize the combat frame
@@ -916,6 +1215,17 @@ export default class Game {
 	 * Activate the next creature in queue
 	 */
 	nextCreature(remote?: boolean) {
+		// Captured before any reassignment below so the broadcast gate can tell
+		// whose turn is actually ending. This matters when nextCreature() is
+		// invoked indirectly (e.g. Creature.die() ending the active creature's
+		// turn as a side effect of an ability) rather than via a direct local
+		// skipTurn/delayCreature call carrying an explicit `remote` flag. In
+		// Devvit mode, opponent actions (moves/abilities) are replayed locally
+		// via the same code path that a live action takes, so without this check
+		// BOTH clients would end up broadcasting their own 'turn-update' for the
+		// same transition, causing races between the two players' turn state.
+		const previousActiveCreature = this.activeCreature;
+
 		this.UI.closeDash();
 		this.UI.btnToggleDash.changeState('normal');
 		this.grid.clearAllXray(); // Clear Xray without re-triggering ghostOverlap
@@ -925,7 +1235,7 @@ export default class Game {
 		}
 
 		this.stopTimer();
-		// Delay
+		// Delay (skipped while backgrounded — see getVisibilityAwareDelay)
 		setTimeout(() => {
 			const interval = setInterval(() => {
 				clearInterval(interval);
@@ -982,17 +1292,27 @@ export default class Game {
 				this.UI.updateActivebox();
 				this.updateQueueDisplay();
 				this.signals.creature.dispatch('activate', { creature: this.activeCreature });
-				if (this.multiplayer && this.playersReady && this.lobby) {
+				// Only the client whose own player controlled the *outgoing* creature
+				// broadcasts the turn transition. Without this, a locally-replayed
+				// remote action that ends in the opponent's creature dying (and thus
+				// ending its own turn) would cause this client to also broadcast a
+				// 'turn-update', racing with the authoritative one from the acting
+				// client and desyncing whose turn each side thinks it is.
+				const localPlayerIndex = this.lobby?.getLocalPlayer()?.playerIndex;
+				const wasLocalPlayersTurn =
+					!previousActiveCreature || previousActiveCreature.player.id === localPlayerIndex;
+				if (this.multiplayer && this.playersReady && this.lobby && !remote && wasLocalPlayersTurn) {
 					this.lobby.sendAction({
 						type: 'turn-update',
 						playerId: this.lobby.getLocalPlayer()?.playerId || '',
 						creatureId: this.activeCreature.id,
+						turn: this.turn,
 					});
 				} else {
 					this.playersReady = true;
 				}
-			}, 50);
-		}, 300);
+			}, getVisibilityAwareDelay(50));
+		}, getVisibilityAwareDelay(300));
 	}
 
 	updateQueueDisplay(excludeActiveCreature?) {
@@ -1051,23 +1371,51 @@ export default class Game {
 	}
 
 	/**
+	 * Only true when this client is NOT authoritative for the currently active
+	 * creature's turn in a multiplayer match (i.e. it belongs to the other
+	 * human player). Automatic turn-ending triggers (turn timer expiry,
+	 * frozen/dizzy/dazzled/BRB status in Creature.activate()) run locally on
+	 * every client, so without this check both clients could independently
+	 * skip and broadcast for the same turn transition, double-advancing the
+	 * queue on whichever client applies both its own and the echoed remote
+	 * skip. Bot-controlled creatures are exempt since bots run locally on
+	 * every client rather than being owned by a specific human player.
+	 */
+	private isOtherPlayersTurn(): boolean {
+		return (
+			this.multiplayer &&
+			!!this.lobby &&
+			this.activeCreature?.player?.controller !== 'bot' &&
+			!this.lobby.isMyTurn()
+		);
+	}
+
+	/**
 	 * End turn for the current unit
 	 */
 	skipTurn(o?, remote?: boolean) {
+		if (!remote && this.isOtherPlayersTurn()) {
+			return;
+		}
+
 		// NOTE: If skipping a turn and there is a temp creature, destroy it.
 		this.creatures.filter((c) => c?.temp).forEach((c) => c.destroy());
 
-		if (!remote && this.multiplayer && this.lobby) {
-			this.lobby.sendAction({
-				type: 'action-end',
-				action: 'skip',
-				playerId: this.lobby.getLocalPlayer()?.playerId || '',
-				creatureId: this.activeCreature?.id || 0,
-			});
-		}
-
 		if (this.turnThrottle && !remote) {
 			return;
+		}
+
+		if (!remote && this.multiplayer && this.lobby) {
+			if (this.authoritative) {
+				this.sendIntent({ kind: 'skip' } as Intent);
+			} else {
+				this.lobby.sendAction({
+					type: 'action-end',
+					action: 'skip',
+					playerId: this.lobby.getLocalPlayer()?.playerId || '',
+					creatureId: this.activeCreature?.id || 0,
+				});
+			}
 		}
 
 		o = $j.extend(
@@ -1129,21 +1477,30 @@ export default class Game {
 	 */
 
 	delayCreature(o?, remote?: boolean) {
-		if (!remote && this.multiplayer && this.lobby) {
-			this.lobby.sendAction({
-				type: 'action-end',
-				action: 'delay',
-				playerId: this.lobby.getLocalPlayer()?.playerId || '',
-				creatureId: this.activeCreature?.id || 0,
-			});
+		if (!this.activeCreature?.canWait || this.queue.isCurrentEmpty()) {
+			return;
 		}
+
+		if (!remote && this.isOtherPlayersTurn()) {
+			return;
+		}
+
 
 		if (this.turnThrottle && !remote) {
 			return;
 		}
 
-		if (!this.activeCreature?.canWait || this.queue.isCurrentEmpty()) {
-			return;
+		if (!remote && this.multiplayer && this.lobby) {
+			if (this.authoritative) {
+				this.sendIntent({ kind: 'delay' } as Intent);
+			} else {
+				this.lobby.sendAction({
+					type: 'action-end',
+					action: 'delay',
+					playerId: this.lobby.getLocalPlayer()?.playerId || '',
+					creatureId: this.activeCreature?.id || 0,
+				});
+			}
 		}
 
 		o = $j.extend(
@@ -1695,6 +2052,30 @@ export default class Game {
 		this.UI.endGame();
 	}
 
+	/**
+	 * Apply a recorded/relayed "move" action to the current activeCreature.
+	 * Shared by action() (saved-log replay) and handleLobbyMessage()'s
+	 * 'action-move' case (live multiplayer relay) so there's exactly one place
+	 * that knows how to turn a move record into a real move — see
+	 * Creature.moveTo()'s `opts.path` handling for why replaying the exact
+	 * recorded path (rather than recalculating pathfinding) matters for
+	 * multiplayer sync.
+	 */
+	private applyMoveRecord(
+		record: { target: { x: number; y: number }; path?: Array<{ x: number; y: number }> },
+		callback?: () => void,
+	) {
+		const hex = this.grid.hexes[record.target.y][record.target.x];
+		const path = record.path
+			?.map((p) => this.grid.hexes[p.y]?.[p.x])
+			.filter((pathHex): pathHex is Hex => Boolean(pathHex));
+		this.activeCreature.moveTo(hex, {
+			path: path && path.length ? path : undefined,
+			// eslint-disable-next-line @typescript-eslint/no-empty-function
+			callback: callback ?? function () {},
+		});
+	}
+
 	action(o, opt) {
 		const defaultOpt = {
 			// eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -1706,19 +2087,23 @@ export default class Game {
 		this.clearOncePerDamageChain();
 		switch (o.action) {
 			case 'move':
-				this.activeCreature.moveTo(this.grid.hexes[o.target.y][o.target.x], {
-					callback: opt.callback,
-				});
+				this.applyMoveRecord(o, opt.callback);
 				break;
 			case 'skip':
-				this.skipTurn({
-					callback: opt.callback,
-				});
+				this.skipTurn(
+					{
+						callback: opt.callback,
+					},
+					true,
+				);
 				break;
 			case 'delay':
-				this.delayCreature({
-					callback: opt.callback,
-				});
+				this.delayCreature(
+					{
+						callback: opt.callback,
+					},
+					true,
+				);
 				break;
 			case 'flee':
 				this.activeCreature.player.flee({
@@ -1726,8 +2111,16 @@ export default class Game {
 				});
 				break;
 			case 'ability': {
-				const args = $j.makeArray(o.args || []);
+				// Reconstruct the live ability args. The recorded action stores
+				// `args` as everything AFTER the target (gamelog: `args.slice(1)`),
+				// so the full live arg array is `[target, ...o.args]`. This mirrors
+				// handleLobbyMessage's action-ability path; the previous
+				// `$j.makeArray(o.args[1])` reconstruction dropped `arg[1]` and all
+				// later args, breaking replay of multi-argument abilities.
 				const ability = this.activeCreature.abilities[o.id];
+				if (!ability) break;
+
+				const args = Array.isArray(o.args) ? [...o.args] : [];
 
 				if (o.target.type == 'hex') {
 					args.unshift(this.grid.hexes[o.target.y][o.target.x]);
@@ -1735,17 +2128,16 @@ export default class Game {
 						callback: opt.callback,
 						arg: args,
 					});
-				}
-
-				if (o.target.type == 'creature') {
-					args.unshift(this.creatures[o.target.crea]);
-					ability.animation2({
-						callback: opt.callback,
-						arg: args,
-					});
-				}
-
-				if (o.target.type == 'array') {
+				} else if (o.target.type == 'creature') {
+					const targetCreature = this.creatures[o.target.crea];
+					if (targetCreature) {
+						args.unshift(targetCreature);
+						ability.animation2({
+							callback: opt.callback,
+							arg: args,
+						});
+					}
+				} else if (o.target.type == 'array') {
 					const array = o.target.array.map((item) => this.grid.hexes[item.y][item.x]);
 
 					args.unshift(array);

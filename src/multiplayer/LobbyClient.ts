@@ -1,9 +1,10 @@
 import type Game from '../game';
 import { PeerLobbyProvider } from './PeerLobbyProvider';
+import type { AuthoritativeState, Intent } from './authoritative';
 import {
 	GameConfig,
 	GameMessage,
-	ILobbyProvider,
+	INetworkBackend,
 	LobbyCode,
 	LobbySession,
 	LobbyState,
@@ -13,9 +14,9 @@ import {
 
 export class LobbyClient {
 	private readonly game: Game;
-	private readonly provider: ILobbyProvider;
+	private readonly provider: INetworkBackend;
 
-	constructor(game: Game, provider: ILobbyProvider = new PeerLobbyProvider()) {
+	constructor(game: Game, provider: INetworkBackend = new PeerLobbyProvider()) {
 		this.game = game;
 		this.provider = provider;
 
@@ -27,6 +28,7 @@ export class LobbyClient {
 		});
 
 		this.provider.onGameMessage((message) => this.game.handleLobbyMessage(message));
+		this.provider.onAuthoritativeState((state) => this.game.adoptAuthoritativeState(state));
 	}
 
 	async createMatch(config: GameConfig, code?: LobbyCode): Promise<LobbySession> {
@@ -49,8 +51,13 @@ export class LobbyClient {
 		this.provider.leaveLobby();
 	}
 
-	sendAction(message: GameMessage): void {
-		this.provider.sendGameMessage(message);
+	async sendAction(message: GameMessage): Promise<void> {
+		await this.provider.sendGameMessage(message);
+	}
+
+	/** Send a player input to the authoritative server (transport-agnostic). */
+	async sendIntent(intent: Intent): Promise<void> {
+		await this.provider.sendIntent(intent);
 	}
 
 	isMyTurn(): boolean {
@@ -71,6 +78,11 @@ export class LobbyClient {
 		return this.provider.getLobbyState();
 	}
 
+	/** Receive authoritative state snapshots broadcast by the server. */
+	onAuthoritativeState(cb: (state: AuthoritativeState) => void): void {
+		this.provider.onAuthoritativeState(cb);
+	}
+
 	getLocalPlayer() {
 		return this.provider.getLocalPlayer();
 	}
@@ -85,7 +97,9 @@ export class LobbyClient {
 		}
 
 		const params = new URLSearchParams(window.location.search);
-		const code = params.get('join');
+		const join = params.get('join');
+		const lobby = params.get('lobby');
+		const code = join || lobby;
 
 		if (!code) {
 			return null;

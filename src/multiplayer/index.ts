@@ -1,10 +1,13 @@
 export { LobbyClient } from './LobbyClient';
 export { PeerLobbyProvider } from './PeerLobbyProvider';
+export { DevvitLobbyProvider } from './DevvitLobbyProvider';
+export { DevvitTransport } from './transport/DevvitTransport';
+export { createLobbyProvider, getNetworkMode } from './provider';
 export type {
 	AbilityTarget,
 	GameConfig,
 	GameMessage,
-	ILobbyProvider,
+	INetworkBackend,
 	ITransport,
 	LobbyCode,
 	LobbyPlayer,

@@ -2,9 +2,11 @@ import { PlayerIdentity } from './identity';
 import { PeerTransport } from './transport/PeerTransport';
 import { ITransport } from './transport/ITransport';
 import {
+	AuthoritativeState,
 	GameConfig,
 	GameMessage,
-	ILobbyProvider,
+	INetworkBackend,
+	Intent,
 	isActionMessage,
 	LobbyCode,
 	LobbyPlayer,
@@ -15,7 +17,7 @@ import {
 	getPeerIdForLobby,
 } from './types';
 
-export class PeerLobbyProvider implements ILobbyProvider {
+export class PeerLobbyProvider implements INetworkBackend {
 	private readonly identity = new PlayerIdentity();
 	private readonly transport: ITransport;
 	private state: LobbyState = this.createEmptyState();
@@ -152,8 +154,16 @@ export class PeerLobbyProvider implements ILobbyProvider {
 		}
 	}
 
-	sendGameMessage(message: GameMessage): void {
+	async sendGameMessage(message: GameMessage): Promise<void> {
 		this.transport.send(message);
+	}
+
+	async sendIntent(intent: Intent): Promise<void> {
+		this.transport.send({
+			type: 'intent',
+			intent,
+			playerId: this.transport.getMyId(),
+		});
 	}
 
 	onLobbyUpdate(cb: (lobby: LobbyState) => void): void {
@@ -162,6 +172,14 @@ export class PeerLobbyProvider implements ILobbyProvider {
 
 	onGameMessage(cb: (message: GameMessage) => void): void {
 		this.gameMessageHandlers.push(cb);
+	}
+
+	onAuthoritativeState(cb: (state: AuthoritativeState) => void): void {
+		this.gameMessageHandlers.push((message) => {
+			if (message.type === 'authoritative-state') {
+				cb(message.state);
+			}
+		});
 	}
 
 	private wireTransport(): void {

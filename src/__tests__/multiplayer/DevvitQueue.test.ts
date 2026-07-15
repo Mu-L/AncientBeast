@@ -1,0 +1,156 @@
+import { jest, expect, describe, test, beforeEach } from '@jest/globals';
+import {
+	handleQueueJoin,
+	handleQueueStatus,
+	tryMatchQueue,
+	type RedisLike,
+} from '../../devvit/queue';
+
+class FakeRedis implements RedisLike {
+	private readonly strings = new Map<string, string>();
+	private readonly sortedSets = new Map<string, Array<{ member: string; score: number }>>();
+
+	async zAdd(key: string, ...members: Array<{ member: string; score: number }>): Promise<number> {
+		let set = this.sortedSets.get(key);
+		if (!set) {
+			set = [];
+			this.sortedSets.set(key, set);
+		}
+		let added = 0;
+		for (const item of members) {
+			const existing = set.findIndex((entry) => entry.member === item.member);
+			if (existing >= 0) {
+				set[existing] = item;
+			} else {
+				set.push(item);
+				added++;
+			}
+		}
+		return added;
+	}
+
+	async zRange(
+		key: string,
+		start: number,
+		stop: number,
+		_options?: { by: 'score' | 'rank' },
+	): Promise<Array<{ member: string; score: number }>> {
+		const set = this.sortedSets.get(key) || [];
+		const sorted = [...set].sort((a, b) => a.score - b.score);
+		const from = start === 0 ? 0 : start;
+		const stopStr = String(stop);
+		const to = stopStr === '+inf' || stopStr === '-1' ? sorted.length - 1 : (stop as number);
+		return sorted.slice(from, to + 1);
+	}
+
+	async zRem(key: string, members: string[]): Promise<number> {
+		const set = this.sortedSets.get(key);
+		if (!set) return 0;
+		let removed = 0;
+		for (const member of members) {
+			const idx = set.findIndex((item) => item.member === member);
+			if (idx >= 0) {
+				set.splice(idx, 1);
+				removed++;
+			}
+		}
+		return removed;
+	}
+
+	async set(key: string, value: string, _options?: Record<string, unknown>): Promise<string> {
+		this.strings.set(key, value);
+		return 'OK';
+	}
+
+	async get(key: string): Promise<string | undefined> {
+		return this.strings.get(key);
+	}
+
+	async expire(_key: string, _seconds: number): Promise<void> {}
+
+	async exists(...keys: string[]): Promise<number> {
+		return keys.filter((key) => this.strings.has(key)).length;
+	}
+
+	async del(...keys: string[]): Promise<void> {
+		for (const key of keys) {
+			this.strings.delete(key);
+			this.sortedSets.delete(key);
+		}
+	}
+}
+
+describe('queue', () => {
+	let redis: FakeRedis;
+
+	beforeEach(() => {
+		redis = new FakeRedis();
+	});
+
+	test('two players get matched', async () => {
+		const resA = await handleQueueJoin(redis, 'player-a');
+		expect(resA.status).toBe('waiting');
+
+		const resB = await handleQueueJoin(redis, 'player-b');
+		expect(resB.status).toBe('matched');
+		expect(resB.lobbyCode).toBeDefined();
+		expect(resA.lobbyCode).toBeUndefined();
+
+		const statusA = await handleQueueStatus(redis, 'player-a');
+		expect(statusA.status).toBe('matched');
+		expect(statusA.lobbyCode).toBe(resB.lobbyCode);
+
+		const statusB = await handleQueueStatus(redis, 'player-b');
+		expect(statusB.lobbyCode).toBe(resB.lobbyCode);
+	});
+
+	test('recent opponent is skipped within retry window', async () => {
+		const recentKey = 'ab:recent:player-a:player-b';
+		await redis.set(recentKey, '1');
+
+		await handleQueueJoin(redis, 'player-a');
+		await handleQueueJoin(redis, 'player-b');
+
+		const status = await handleQueueStatus(redis, 'player-a');
+		expect(status.status).toBe('waiting');
+	});
+
+	test('recent opponent is allowed after retry window', async () => {
+		const recentKey = 'ab:recent:player-a:player-b';
+		await redis.set(recentKey, '1');
+
+		const oldTime = Date.now() - 20000;
+		await redis.zAdd('ab:queue', { member: 'player-a', score: oldTime });
+		await redis.zAdd('ab:queue', { member: 'player-b', score: oldTime });
+
+		const result = await tryMatchQueue(redis);
+		expect(result.matched).toBe(true);
+		expect(result.lobbyCode).toBeDefined();
+	});
+
+	test('single player gets bot match after timeout', async () => {
+		const oldTime = Date.now() - 35000;
+		await redis.zAdd('ab:queue', { member: 'player-a', score: oldTime });
+
+		const result = await handleQueueJoin(redis, 'player-a');
+		expect(result.status).toBe('matched');
+		expect(result.lobbyCode).toBeDefined();
+		expect(result.bot).toBe(true);
+
+		const meta = JSON.parse((await redis.get(`ab:lobby:${result.lobbyCode}:meta`)) || '{}');
+		expect(meta.bot).toBe(true);
+	});
+
+	test('status endpoint reports bot lobbies', async () => {
+		const oldTime = Date.now() - 35000;
+		await redis.zAdd('ab:queue', { member: 'player-a', score: oldTime });
+
+		const joinResult = await handleQueueJoin(redis, 'player-a');
+		expect(joinResult.status).toBe('matched');
+
+		const status = await handleQueueStatus(redis, 'player-a');
+		expect(status.status).toBe('matched');
+		expect(status.lobbyCode).toBe(joinResult.lobbyCode);
+		expect(status.bot).toBe(true);
+	});
+});

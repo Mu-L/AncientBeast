@@ -399,7 +399,6 @@ export default class BotController {
 		return Boolean(
 			activeCreature &&
 				activeCreature.player.controller === 'bot' &&
-				!this.game.multiplayer &&
 				this.game.gameState === 'playing',
 		);
 	}
