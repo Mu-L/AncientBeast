@@ -35,6 +35,7 @@ import { Drop } from './drop';
 import { CreatureType, Realm, UnitData } from './data/types';
 import { setAudioMode } from './sound/soundsys';
 import BotController from './bot';
+import { locationPaths } from '../assets/index';
 
 /* eslint-disable prefer-rest-params */
 
@@ -519,7 +520,12 @@ export default class Game {
 			});
 
 			// Background
-			phaser.load.image('background', getUrl('locations/' + this.background_image));
+			const backgroundImage =
+				this.background_image ||
+				this.configData.background_image ||
+				this.configData.combatLocation ||
+				locationPaths[0];
+			phaser.load.image('background', getUrl('locations/' + backgroundImage));
 
 			// Branding
 			phaser.load.image('AncientBeastLogo', getUrl('interface/AncientBeast'));
