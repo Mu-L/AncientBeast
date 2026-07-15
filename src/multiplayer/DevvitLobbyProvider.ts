@@ -9,7 +9,7 @@ import type {
 	LobbyState,
 	PeerId,
 } from './types';
-import { generateLobbyCode, isSelfAppliedActionMessage, isSequencedGameMessage } from './types';
+import { generateLobbyCode, isSelfAppliedActionMessage } from './types';
 
 interface CreateLobbyResponse {
 	code: LobbyCode;
@@ -26,6 +26,13 @@ export class DevvitLobbyProvider implements INetworkBackend {
 	private connected = false;
 	private nextServerOrder: number | null = null;
 	private pendingOrderedMessages = new Map<number, { message: GameMessage; peerId: PeerId }>();
+	private gapRecoveryTimer: number | null = null;
+	private gapRecoveryInFlight = false;
+	private gapRecoveryAttempts = 0;
+	private awaitingSyncSnapshot = false;
+ 
+	private static readonly GAP_RECOVERY_DELAY_MS = 300;
+	private static readonly GAP_RECOVERY_MAX_ATTEMPTS = 2;
 
 	constructor(transport?: DevvitTransport) {
 		this.transport = transport ?? new DevvitTransport({});
@@ -133,7 +140,9 @@ export class DevvitLobbyProvider implements INetworkBackend {
 
 	getLocalPlayer(): LobbyPlayer | undefined {
 		const myPeerId = this.transport.getMyId();
-		return this.state.players.find((player) => player.peerId === myPeerId);
+		return this.state.players.find(
+			(player) => player.peerId === myPeerId || player.playerId === myPeerId,
+		);
 	}
 
 	markMatchStarted(): void {
@@ -179,6 +188,16 @@ export class DevvitLobbyProvider implements INetworkBackend {
 	}
 
 	private processTransportMessage(message: GameMessage, peerId: PeerId): void {
+		if (message.type === 'sync-request') {
+			this.handleSyncRequest(message);
+			return;
+		}
+
+		if (message.type === 'sync-snapshot') {
+			this.handleSyncSnapshot(message);
+			return;
+		}
+
 		// In Devvit mode the server relays every message to ALL clients, including the
 		// sender. The acting client already applies action messages locally (e.g.
 		// Ability.animation -> animation2 -> activate -> player.summon for materialize),
@@ -222,7 +241,7 @@ export class DevvitLobbyProvider implements INetworkBackend {
 	}
 
 	private shouldSequenceMessage(message: GameMessage): boolean {
-		return message.serverOrder != null && isSequencedGameMessage(message);
+		return message.serverOrder != null;
 	}
 
 	private enqueueSequencedMessage(message: GameMessage, peerId: PeerId): void {
@@ -243,9 +262,12 @@ export class DevvitLobbyProvider implements INetworkBackend {
 
 		this.pendingOrderedMessages.set(serverOrder, { message, peerId });
 		this.flushSequencedMessages();
+		this.scheduleGapRecovery();
 	}
 
 	private flushSequencedMessages(): void {
+		let progressed = false;
+
 		while (this.nextServerOrder != null) {
 			const pending = this.pendingOrderedMessages.get(this.nextServerOrder);
 
@@ -256,12 +278,158 @@ export class DevvitLobbyProvider implements INetworkBackend {
 			this.pendingOrderedMessages.delete(this.nextServerOrder);
 			this.processTransportMessage(pending.message, pending.peerId);
 			this.nextServerOrder += 1;
+			progressed = true;
+		}
+
+		if (progressed) {
+			this.gapRecoveryAttempts = 0;
+			this.awaitingSyncSnapshot = false;
+		}
+
+		this.scheduleGapRecovery();
+	}
+
+	private scheduleGapRecovery(): void {
+		if (this.gapRecoveryTimer != null) {
+			clearTimeout(this.gapRecoveryTimer);
+			this.gapRecoveryTimer = null;
+		}
+
+		if (this.nextServerOrder == null || this.awaitingSyncSnapshot) {
+			return;
+		}
+
+		if (!this.hasOutOfOrderGap()) {
+			return;
+		}
+
+		this.gapRecoveryTimer = window.setTimeout(() => {
+			this.gapRecoveryTimer = null;
+			void this.tryRecoverGap();
+		}, DevvitLobbyProvider.GAP_RECOVERY_DELAY_MS);
+	}
+
+	private async tryRecoverGap(): Promise<void> {
+		if (this.gapRecoveryInFlight || this.nextServerOrder == null || this.awaitingSyncSnapshot) {
+			return;
+		}
+
+		if (!this.hasOutOfOrderGap()) {
+			return;
+		}
+
+		this.gapRecoveryInFlight = true;
+
+		try {
+			const afterOrder = Math.max(0, this.nextServerOrder - 1);
+			const entries = await this.transport.fetchMessagesAfter(afterOrder);
+
+			for (const entry of entries) {
+				this.enqueueSequencedMessage(entry.message, entry.from);
+			}
+
+			if (this.nextServerOrder == null || this.pendingOrderedMessages.has(this.nextServerOrder)) {
+				this.gapRecoveryAttempts = 0;
+				return;
+			}
+
+			this.gapRecoveryAttempts += 1;
+			if (this.gapRecoveryAttempts >= DevvitLobbyProvider.GAP_RECOVERY_MAX_ATTEMPTS) {
+				await this.requestSyncSnapshot();
+				return;
+			}
+
+			this.scheduleGapRecovery();
+		} finally {
+			this.gapRecoveryInFlight = false;
 		}
 	}
 
+	private async requestSyncSnapshot(): Promise<void> {
+		if (this.awaitingSyncSnapshot) {
+			return;
+		}
+
+		if (this.isHostFlag) {
+			return;
+		}
+
+		const localPlayer = this.getLocalPlayer();
+		if (!localPlayer || this.nextServerOrder == null) {
+			return;
+		}
+
+		this.awaitingSyncSnapshot = true;
+		await this.transport.send({
+			type: 'sync-request',
+			playerId: localPlayer.playerId,
+			expectedServerOrder: this.nextServerOrder,
+			reason: 'missing-sequenced-messages',
+		});
+	}
+
+	private hasOutOfOrderGap(): boolean {
+		if (this.nextServerOrder == null) {
+			return false;
+		}
+
+		if (this.pendingOrderedMessages.size === 0) {
+			return false;
+		}
+
+		if (this.pendingOrderedMessages.has(this.nextServerOrder)) {
+			return false;
+		}
+
+		for (const order of this.pendingOrderedMessages.keys()) {
+			if (order > this.nextServerOrder) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private handleSyncRequest(message: GameMessage & { type: 'sync-request' }): void {
+		if (!this.isHostFlag) {
+			return;
+		}
+
+		const localPlayer = this.getLocalPlayer();
+		if (!localPlayer) {
+			return;
+		}
+
+		void this.transport.send({
+			type: 'sync-snapshot',
+			playerId: message.playerId,
+			config: this.state.config,
+			reason:
+				message.reason ||
+				`resync requested at order ${String(message.expectedServerOrder)}`,
+		});
+	}
+
+	private handleSyncSnapshot(message: GameMessage & { type: 'sync-snapshot' }): void {
+		const localPlayer = this.getLocalPlayer();
+		if (!localPlayer || localPlayer.playerId !== message.playerId) {
+			return;
+		}
+
+		this.awaitingSyncSnapshot = false;
+		this.resetServerOrdering();
+		this.gameMessageHandlers.forEach((handler) => handler(message));
+	}
+
 	private resetServerOrdering(): void {
+		if (this.gapRecoveryTimer != null) {
+			clearTimeout(this.gapRecoveryTimer);
+			this.gapRecoveryTimer = null;
+		}
 		this.nextServerOrder = null;
 		this.pendingOrderedMessages.clear();
+		this.gapRecoveryAttempts = 0;
+		this.awaitingSyncSnapshot = false;
 	}
 
 	private handlePlayerJoined(player: LobbyPlayer, peerId: PeerId): void {

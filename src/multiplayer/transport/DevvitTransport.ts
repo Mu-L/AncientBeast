@@ -42,12 +42,15 @@ export class DevvitTransport implements ITransport {
 	private knownPeerIds = new Set<PeerId>();
 	private lobbyCode = '';
 	private connectResolve?: (() => void) | null = null;
+	private triggerPoll?: () => void;
+	private visibilityHandler?: () => void;
 
 	private readonly pollIntervalMs: number;
 
 	constructor(deps: DevvitTransportDeps) {
 		this.deps = deps;
-		this.pollIntervalMs = deps.pollIntervalMs ?? 400;
+		// Keep Devvit polling tight for near-real-time multiplayer feel.
+		this.pollIntervalMs = deps.pollIntervalMs ?? 120;
 	}
 
 	async connect(lobbyId: string, options: TransportConnectOptions = {}): Promise<void> {
@@ -86,10 +89,16 @@ export class DevvitTransport implements ITransport {
 	disconnect(): void {
 		this.disconnected = true;
 		this.connectResolve = null;
+		this.triggerPoll = undefined;
 
 		if (this.pollTimer !== null) {
 			clearInterval(this.pollTimer);
 			this.pollTimer = null;
+		}
+
+		if (this.visibilityHandler) {
+			document.removeEventListener('visibilitychange', this.visibilityHandler);
+			this.visibilityHandler = undefined;
 		}
 
 		const fetchImpl = this.deps.fetchImpl ?? fetch;
@@ -129,6 +138,43 @@ export class DevvitTransport implements ITransport {
 		await this.send(data);
 	}
 
+	async fetchMessagesAfter(afterOrder: number): Promise<Array<{ cursor: string; from: PeerId; message: GameMessage }>> {
+		if (this.disconnected) {
+			return [];
+		}
+
+		const fetchImpl = this.deps.fetchImpl ?? fetch;
+		const base =
+			typeof window !== 'undefined' && window.location.origin
+				? window.location.origin
+				: 'http://localhost';
+		const url = new URL(`/api/lobby/${encodeURIComponent(this.lobbyCode)}/messages`, base);
+		url.searchParams.set('playerId', this.myId);
+		url.searchParams.set('after', String(afterOrder));
+
+		try {
+			const res = await fetchImpl(url.toString(), { method: 'GET' });
+
+			if (!res.ok || this.disconnected) {
+				return [];
+			}
+
+			const entriesRaw = await res.json();
+			const entries = Array.isArray(entriesRaw) ? (entriesRaw as MessageEntry[]) : [];
+
+			return entries.map((entry) => ({
+				cursor: entry.cursor,
+				from: entry.from,
+				message: this.withServerOrder(entry.message, entry.cursor),
+			}));
+		} catch (error) {
+			if (!this.disconnected) {
+				console.warn('[DevvitTransport] fetchMessagesAfter failed:', error);
+			}
+			return [];
+		}
+	}
+
 	onMessage(cb: (data: GameMessage, peerId: PeerId) => void): void {
 		this.messageHandlers.push(cb);
 	}
@@ -163,6 +209,8 @@ export class DevvitTransport implements ITransport {
 		}
 
 		const poll = async () => {
+			let shouldPollAgain = false;
+
 			if (this.disconnected) {
 				return;
 			}
@@ -196,6 +244,7 @@ export class DevvitTransport implements ITransport {
 
 				const entriesRaw = await res.json();
 				const entries = Array.isArray(entriesRaw) ? (entriesRaw as MessageEntry[]) : [];
+				shouldPollAgain = entries.length > 0;
 				const stateUrl = new URL(`/api/lobby/${encodeURIComponent(this.lobbyCode)}/state`, base);
 				stateUrl.searchParams.set('playerId', this.myId);
 				const stateRes = await fetchImpl(stateUrl.toString(), { method: 'GET' });
@@ -254,8 +303,24 @@ export class DevvitTransport implements ITransport {
 				}
 			} finally {
 				this.pollInFlight = false;
+				if (shouldPollAgain && !this.disconnected) {
+					void poll();
+				}
 			}
 		};
+
+		this.triggerPoll = () => {
+			void poll();
+		};
+
+		if (!this.visibilityHandler) {
+			this.visibilityHandler = () => {
+				if (document.visibilityState === 'visible' && this.triggerPoll) {
+					this.triggerPoll();
+				}
+			};
+			document.addEventListener('visibilitychange', this.visibilityHandler);
+		}
 
 		poll();
 		this.pollTimer = window.setInterval(poll, this.pollIntervalMs);

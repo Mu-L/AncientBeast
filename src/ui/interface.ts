@@ -2226,7 +2226,7 @@ export class UI {
 
 		this.$grid
 			.find('.vignette') // Vignettes class
-			.removeClass('active dead queued notsummonable')
+			.removeClass('active dead queued notsummonable materialized unmaterialized')
 			.addClass('locked');
 
 		$j('#tabwrapper').show();
@@ -2255,7 +2255,7 @@ export class UI {
 		game.players[id].creatures.forEach((creature) => {
 			const $crea = this.$grid.find(".vignette[creature='" + creature.type + "']");
 
-			$crea.removeClass('notsummonable');
+			$crea.removeClass('locked notsummonable');
 			if (creature.dead === true) {
 				$crea.addClass('dead');
 			} else {
@@ -3156,7 +3156,8 @@ export class UI {
 			creature = game.activeCreature,
 			$abilitiesButtons = $j('#abilities .ability');
 
-		this.active = !game.multiplayer || !!game.lobby?.isMyTurn();
+		const localPlayer = game.lobby?.getLocalPlayer();
+		this.active = !game.multiplayer || !game.lobby || !localPlayer || game.lobby.isMyTurn();
 
 		// Set/reset cursor based on turn state
 		if (!this.active) {

@@ -20,42 +20,65 @@ export type AbilityTarget =
 
 export type GameMessage = {
 	serverOrder?: number;
-} &
-	(
-		| { type: 'player-joined'; player: LobbyPlayer }
-		| { type: 'lobby-joined'; player: LobbyPlayer }
-		| { type: 'player-left'; playerId: PlayerId; player: LobbyPlayer }
-		| {
-				type: 'match-start';
-				config: GameConfig;
-				players: LobbyPlayer[];
-				host: PlayerId;
-				hostPeerId: PeerId;
-		  }
-		| { type: 'match-loaded'; playerId?: PlayerId }
-		| { type: 'turn-update'; playerId: PlayerId; creatureId: number }
-		| {
-				type: 'action-end';
-				action: 'skip' | 'delay';
-				playerId: PlayerId;
-				creatureId: number;
-		  }
-		| {
-				type: 'action-move';
-				target: { x: number; y: number };
-				playerId: PlayerId;
-				creatureId: number;
-		  }
-		| {
-				type: 'action-ability';
-				id: number;
-				target: AbilityTarget;
-				args: unknown[];
-				playerId: PlayerId;
-				creatureId: number;
-		  }
-		| { type: 'heartbeat'; timestamp: number; playerId: PlayerId }
-	);
+} & (
+	| { type: 'player-joined'; player: LobbyPlayer }
+	| { type: 'lobby-joined'; player: LobbyPlayer }
+	| { type: 'player-left'; playerId: PlayerId; player: LobbyPlayer }
+	| {
+			type: 'match-start';
+			config: GameConfig;
+			players: LobbyPlayer[];
+			host: PlayerId;
+			hostPeerId: PeerId;
+	  }
+	| { type: 'match-loaded'; playerId?: PlayerId }
+	| { type: 'sync-request'; playerId: PlayerId; expectedServerOrder: number; reason?: string }
+	| {
+			type: 'sync-snapshot';
+			playerId: PlayerId;
+			config: GameConfig;
+			reason?: string;
+	  }
+	| { type: 'turn-update'; playerId: PlayerId; creatureId: number; turn: number }
+	| {
+			type: 'action-end';
+			action: 'skip' | 'delay';
+			playerId: PlayerId;
+			creatureId: number;
+	  }
+	| {
+			type: 'action-move';
+			target: { x: number; y: number };
+			// The exact hex-by-hex path the acting client's pathfinding produced.
+			// The receiver replays this path directly instead of recalculating its
+			// own from `target`, so a transient grid-state difference between the
+			// two clients (e.g. from an in-flight animation) can't send the
+			// creature down a different route or to a different final hex.
+			path?: Array<{ x: number; y: number }>;
+			playerId: PlayerId;
+			creatureId: number;
+	  }
+	| {
+			type: 'action-ability';
+			id: number;
+			target: AbilityTarget;
+			args: unknown[];
+			playerId: PlayerId;
+			creatureId: number;
+	  }
+	| {
+			type: 'creature-died';
+			// Authoritative confirmation of a death, broadcast by the client whose
+			// action caused it (see Creature.die()). The receiver force-applies the
+			// death if its own local state still has the creature alive, instead of
+			// trusting its own damage computation to have agreed — this is what
+			// prevents "creature died for one player, still alive for the other".
+			creatureId: number;
+			killerId?: number;
+			playerId: PlayerId;
+	  }
+	| { type: 'heartbeat'; timestamp: number; playerId: PlayerId }
+);
 
 export interface TransportConnectOptions {
 	isHost?: boolean;
@@ -153,6 +176,7 @@ export function isSequencedGameMessage(message: GameMessage): boolean {
 		message.type === 'action-end' ||
 		message.type === 'action-move' ||
 		message.type === 'action-ability' ||
+		message.type === 'creature-died' ||
 		message.type === 'player-left'
 	);
 }
@@ -163,10 +187,14 @@ export function isSequencedGameMessage(message: GameMessage): boolean {
  * materialize). In relay-based backends (Devvit) the server echoes every message
  * back to its sender, so the receiver must skip these self-originated echoes to
  * avoid applying the same effect twice (stacked units, duplicate moves, etc.).
- * Peer mode sidesteps this with sendExcept(sender). `turn-update` is deliberately
- * excluded: it only re-activates a creature and is idempotent, so letting the
- * self-echo through is harmless and avoids any turn-sync edge cases.
+ * Peer mode sidesteps this with sendExcept(sender). `turn-update` is also
+ * self-applied by the acting client via local turn handoff, so replaying the
+ * echoed update can re-trigger activate()/UI transitions and stack hints.
+ * `creature-died` is likewise self-applied by Creature.die() on the reporting
+ * client itself, before the message is ever sent.
  */
 export function isSelfAppliedActionMessage(message: GameMessage): boolean {
-	return isActionMessage(message);
+	return (
+		isActionMessage(message) || message.type === 'turn-update' || message.type === 'creature-died'
+	);
 }

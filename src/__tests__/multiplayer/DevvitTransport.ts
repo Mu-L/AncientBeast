@@ -143,6 +143,7 @@ describe('DevvitLobbyProvider', () => {
 			connect: jest.fn(async () => {}),
 			disconnect: jest.fn(),
 			send: jest.fn(async () => {}),
+			fetchMessagesAfter: jest.fn(async () => []),
 			sendTo: jest.fn(async () => {}),
 			sendExcept: jest.fn(async () => {}),
 			onMessage: jest.fn(),
@@ -297,6 +298,24 @@ describe('DevvitLobbyProvider', () => {
 		expect(handler).toHaveBeenCalledWith(abilityMessage);
 	});
 
+	test('drops self-originated action-end messages (local turn-end already applied)', () => {
+		const handler = jest.fn();
+		provider.onGameMessage(handler);
+
+		const actionEndMessage: GameMessage = {
+			type: 'action-end',
+			action: 'skip',
+			playerId: 'player-1',
+			creatureId: 1,
+		};
+
+		(
+			provider as unknown as { handleTransportMessage: (m: GameMessage, p: string) => void }
+		).handleTransportMessage(actionEndMessage, 'player-1');
+
+		expect(handler).not.toHaveBeenCalled();
+	});
+
 	test('buffers out-of-order remote actions until self echo advances the shared sequence', () => {
 		const handler = jest.fn();
 		provider.onGameMessage(handler);
@@ -355,5 +374,191 @@ describe('DevvitLobbyProvider', () => {
 
 		expect(handler).toHaveBeenCalledTimes(1);
 		expect(handler).toHaveBeenCalledWith(remoteAction);
+	});
+
+	test('ordered non-gameplay messages do not block subsequent ordered gameplay actions', () => {
+		const handler = jest.fn();
+		provider.onGameMessage(handler);
+
+		const matchStartMessage: GameMessage = {
+			type: 'match-start',
+			config: {
+				gameMode: 2,
+				creaLimitNbr: 3,
+				unitDrops: 1,
+				abilityUpgrades: 3,
+				plasma_amount: 30,
+				turnTimePool: -1,
+				timePool: -1,
+				background_image: 'default',
+			},
+			players: [{ playerId: 'player-1', peerId: 'player-1', name: 'player-1', playerIndex: 0 }],
+			host: 'player-1',
+			hostPeerId: 'player-1',
+			serverOrder: 11,
+		};
+		const heartbeatMessage: GameMessage = {
+			type: 'heartbeat',
+			timestamp: Date.now(),
+			playerId: 'player-2',
+			serverOrder: 12,
+		};
+		const remoteAction: GameMessage = {
+			type: 'action-ability',
+			id: 3,
+			target: { type: 'hex', x: 5, y: 5 },
+			args: [],
+			playerId: 'player-2',
+			creatureId: 2,
+			serverOrder: 13,
+		};
+
+		(
+			provider as unknown as { handleTransportMessage: (m: GameMessage, p: string) => void }
+		).handleTransportMessage(matchStartMessage, 'player-1');
+
+		handler.mockClear();
+
+		(
+			provider as unknown as { handleTransportMessage: (m: GameMessage, p: string) => void }
+		).handleTransportMessage(remoteAction, 'player-2');
+
+		expect(handler).not.toHaveBeenCalled();
+
+		(
+			provider as unknown as { handleTransportMessage: (m: GameMessage, p: string) => void }
+		).handleTransportMessage(heartbeatMessage, 'player-2');
+
+		expect(handler).toHaveBeenCalledTimes(1);
+		expect(handler).toHaveBeenCalledWith(remoteAction);
+	});
+
+	test('requests sync snapshot after repeated gap recovery misses', async () => {
+		jest.useFakeTimers();
+		mockTransport.fetchMessagesAfter.mockResolvedValue([]);
+
+		const matchStartMessage: GameMessage = {
+			type: 'match-start',
+			config: {
+				gameMode: 2,
+				creaLimitNbr: 3,
+				unitDrops: 1,
+				abilityUpgrades: 3,
+				plasma_amount: 30,
+				turnTimePool: -1,
+				timePool: -1,
+				background_image: 'default',
+			},
+			players: [{ playerId: 'player-1', peerId: 'player-1', name: 'player-1', playerIndex: 0 }],
+			host: 'player-1',
+			hostPeerId: 'player-1',
+			serverOrder: 10,
+		};
+
+		(
+			provider as unknown as { handleTransportMessage: (m: GameMessage, p: string) => void }
+		).handleTransportMessage(matchStartMessage, 'player-1');
+
+		const outOfOrderMessage: GameMessage = {
+			type: 'action-move',
+			target: { x: 2, y: 2 },
+			playerId: 'player-2',
+			creatureId: 2,
+			serverOrder: 12,
+		};
+
+		(
+			provider as unknown as { handleTransportMessage: (m: GameMessage, p: string) => void }
+		).handleTransportMessage(outOfOrderMessage, 'player-2');
+
+		for (let i = 0; i < 3; i += 1) {
+			jest.advanceTimersByTime(750);
+			await Promise.resolve();
+		}
+
+		expect(mockTransport.send).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'sync-request',
+				playerId: 'player-1',
+				expectedServerOrder: 11,
+			}),
+		);
+	});
+
+	test('does not request sync when there is no out-of-order gap', async () => {
+		jest.useFakeTimers();
+		mockTransport.fetchMessagesAfter.mockResolvedValue([]);
+
+		const matchStartMessage: GameMessage = {
+			type: 'match-start',
+			config: {
+				gameMode: 2,
+				creaLimitNbr: 3,
+				unitDrops: 1,
+				abilityUpgrades: 3,
+				plasma_amount: 30,
+				turnTimePool: -1,
+				timePool: -1,
+				background_image: 'default',
+			},
+			players: [{ playerId: 'player-1', peerId: 'player-1', name: 'player-1', playerIndex: 0 }],
+			host: 'player-1',
+			hostPeerId: 'player-1',
+			serverOrder: 15,
+		};
+
+		(
+			provider as unknown as { handleTransportMessage: (m: GameMessage, p: string) => void }
+		).handleTransportMessage(matchStartMessage, 'player-1');
+
+		for (let i = 0; i < 4; i += 1) {
+			jest.advanceTimersByTime(750);
+			await Promise.resolve();
+		}
+
+		expect(mockTransport.send).not.toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'sync-request',
+			}),
+		);
+	});
+
+	test('host answers sync requests with a snapshot', () => {
+		(provider as unknown as { isHostFlag: boolean }).isHostFlag = true;
+		(provider as unknown as { state: unknown }).state = {
+			code: 'ABC1',
+			host: 'player-1',
+			hostPeerId: 'player-1',
+			players: [{ playerId: 'player-1', peerId: 'player-1', name: 'player-1', playerIndex: 0 }],
+			config: {
+				gameMode: 2,
+				creaLimitNbr: 3,
+				unitDrops: 1,
+				abilityUpgrades: 3,
+				plasma_amount: 30,
+				turnTimePool: -1,
+				timePool: -1,
+				background_image: 'default',
+			},
+			status: 'playing',
+		};
+
+		const syncRequest: GameMessage = {
+			type: 'sync-request',
+			playerId: 'player-2',
+			expectedServerOrder: 99,
+			reason: 'missing-sequenced-messages',
+		};
+
+		(
+			provider as unknown as { handleTransportMessage: (m: GameMessage, p: string) => void }
+		).handleTransportMessage(syncRequest, 'player-2');
+
+		expect(mockTransport.send).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'sync-snapshot',
+				playerId: 'player-2',
+			}),
+		);
 	});
 });
