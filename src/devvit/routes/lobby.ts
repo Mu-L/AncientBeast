@@ -29,10 +29,15 @@ lobby.post('/', async (c) => {
 			.trim()
 			.toUpperCase()
 			.replace(/[^A-Z0-9-]/g, '') || newLobbyCode();
+	const rawConfig = body.config;
+	const config =
+		rawConfig && typeof rawConfig === 'object' && !Array.isArray(rawConfig)
+			? (rawConfig as Record<string, unknown>)
+			: {};
 
 	const meta: LobbyMeta = {
 		code,
-		config: {},
+		config,
 		status: 'waiting',
 		hostPeerId: '',
 		createdAt: Date.now(),

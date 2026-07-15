@@ -95851,9 +95851,11 @@ var lobby = new Hono2();
 lobby.post("/", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const code = String(body.code || "").trim().toUpperCase().replace(/[^A-Z0-9-]/g, "") || newLobbyCode();
+  const rawConfig = body.config;
+  const config = rawConfig && typeof rawConfig === "object" && !Array.isArray(rawConfig) ? rawConfig : {};
   const meta = {
     code,
-    config: {},
+    config,
     status: "waiting",
     hostPeerId: "",
     createdAt: Date.now()
