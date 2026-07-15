@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-empty-function */
+/* global NodeListOf */
 import * as fs from 'fs';
 import * as nodePath from 'path';
 
@@ -23,7 +24,10 @@ import * as nodePath from 'path';
 // dummy shim below covers any stragglers.
 let TEMPLATE_HTML = '';
 try {
-	TEMPLATE_HTML = fs.readFileSync(nodePath.resolve(__dirname, '../templates/interface.html'), 'utf8');
+	TEMPLATE_HTML = fs.readFileSync(
+		nodePath.resolve(__dirname, '../templates/interface.html'),
+		'utf8',
+	);
 } catch {
 	// Server builds may relocate the template; the dummy shim still covers setup.
 }
@@ -59,7 +63,8 @@ declare const globalThis: typeof global & { [key: string]: unknown };
 function ensureHeadlessDom(): void {
 	if (typeof document === 'undefined' || !document.body) return;
 	if (typeof (globalThis as { fetch?: unknown }).fetch === 'undefined') {
-		(globalThis as { fetch?: unknown }).fetch = () => Promise.reject(new Error('headless: network disabled'));
+		(globalThis as { fetch?: unknown }).fetch = () =>
+			Promise.reject(new Error('headless: network disabled'));
 	}
 	// jsdom doesn't implement canvas 2d; plasma-field's getContext returns null
 	// and guards on it, so just make the call a no-op to silence the warning.
@@ -95,7 +100,11 @@ function ensureHeadlessDom(): void {
 	document.querySelector = ((sel: string) => {
 		const found = origQuery(sel);
 		if (found) return found;
-		if (!cache.has(sel)) cache.set(sel, makeDummy(typeof sel === 'string' ? (sel.match(/#([\w-]+)/) || [])[1] : undefined));
+		if (!cache.has(sel))
+			cache.set(
+				sel,
+				makeDummy(typeof sel === 'string' ? (sel.match(/#([\w-]+)/) || [])[1] : undefined),
+			);
 		return cache.get(sel) as HTMLElement;
 	}) as typeof document.querySelector;
 
@@ -162,14 +171,28 @@ function makePhaserGroup() {
 		angle: 0,
 		exists: true,
 		children: [] as any[],
-		position: { set(x: number, y: number) { grp.x = x; grp.y = y; } },
+		position: {
+			set(x: number, y: number) {
+				grp.x = x;
+				grp.y = y;
+			},
+		},
 		scale: {
 			x: 1,
 			y: 1,
-			setTo(x: number, y: number) { grp.x = x; grp.y = y; },
-			set(x: number, y: number) { grp.x = x; grp.y = y; },
+			setTo(x: number, y: number) {
+				grp.x = x;
+				grp.y = y;
+			},
+			set(x: number, y: number) {
+				grp.x = x;
+				grp.y = y;
+			},
 		},
-		add: (child: any) => { grp.children.push(child); return child; },
+		add: (child: any) => {
+			grp.children.push(child);
+			return child;
+		},
 		remove: () => undefined,
 		removeChild: () => undefined,
 		addChild: () => undefined,
@@ -189,8 +212,16 @@ function makePhaserGroup() {
 
 function makePhaserSprite() {
 	const sprite: any = {
-		x: 0, y: 0, alpha: 1, angle: 0, rotation: 0, exists: true, key: '', text: '',
-		inputEnabled: false, ignoreChildInput: false,
+		x: 0,
+		y: 0,
+		alpha: 1,
+		angle: 0,
+		rotation: 0,
+		exists: true,
+		key: '',
+		text: '',
+		inputEnabled: false,
+		ignoreChildInput: false,
 		input: { useHandCursor: false, priorityID: 0 },
 		events: {
 			onInputUp: { add: () => undefined },
@@ -199,34 +230,75 @@ function makePhaserSprite() {
 			onInputOut: { add: () => undefined },
 		},
 		anchor: {
-			x: 0, y: 0,
-			setTo(x: number, y: number) { sprite.x = x; sprite.y = y; },
-			set(x: number, y: number) { sprite.x = x; sprite.y = y; },
+			x: 0,
+			y: 0,
+			setTo(x: number, y: number) {
+				sprite.x = x;
+				sprite.y = y;
+			},
+			set(x: number, y: number) {
+				sprite.x = x;
+				sprite.y = y;
+			},
 		},
 		scale: {
-			x: 1, y: 1,
-			setTo(x: number, y: number) { sprite.x = x; sprite.y = y; },
-			set(x: number, y: number) { sprite.x = x; sprite.y = y; },
+			x: 1,
+			y: 1,
+			setTo(x: number, y: number) {
+				sprite.x = x;
+				sprite.y = y;
+			},
+			set(x: number, y: number) {
+				sprite.x = x;
+				sprite.y = y;
+			},
 		},
-		texture: { width: 10, height: 10 }, width: 10, height: 10,
-		position: { x: 0, y: 0, set(x: number, y: number) { sprite.x = x; sprite.y = y; } },
-		data: {}, parent: null,
+		texture: { width: 10, height: 10 },
+		width: 10,
+		height: 10,
+		position: {
+			x: 0,
+			y: 0,
+			set(x: number, y: number) {
+				sprite.x = x;
+				sprite.y = y;
+			},
+		},
+		data: {},
+		parent: null,
 		getBounds: () => ({ x: 0, y: 0, width: 10, height: 10 }),
 		loadTexture: () => undefined,
 		alignIn: () => undefined,
-		destroy: () => undefined, kill: () => undefined, revive: () => undefined,
-		beginFill: () => undefined, drawRect: () => undefined, endFill: () => undefined,
-		clear: () => undefined, mask: null,
+		destroy: () => undefined,
+		kill: () => undefined,
+		revive: () => undefined,
+		beginFill: () => undefined,
+		drawRect: () => undefined,
+		endFill: () => undefined,
+		clear: () => undefined,
+		mask: null,
 	};
 	return sprite;
 }
 
 function makePhaserBitmapData() {
 	return {
-		width: 10, height: 10,
-		canvas: { getContext: () => ({ drawImage: () => undefined, putImageData: () => undefined, getImageData: () => ({ data: new Uint8ClampedArray(0) }) }) },
-		context: { drawImage: () => undefined, putImageData: () => undefined, getImageData: () => ({ data: new Uint8ClampedArray(0) }) },
-		dirty: false, destroy: () => undefined,
+		width: 10,
+		height: 10,
+		canvas: {
+			getContext: () => ({
+				drawImage: () => undefined,
+				putImageData: () => undefined,
+				getImageData: () => ({ data: new Uint8ClampedArray(0) }),
+			}),
+		},
+		context: {
+			drawImage: () => undefined,
+			putImageData: () => undefined,
+			getImageData: () => ({ data: new Uint8ClampedArray(0) }),
+		},
+		dirty: false,
+		destroy: () => undefined,
 	};
 }
 
@@ -234,18 +306,35 @@ export function buildPhaserMock(): any {
 	return {
 		world: { width: 1920, height: 1080 },
 		cache: { getImage: () => null },
-		width: 1920, height: 1080,
-		scale: { parentIsWindow: false, pageAlignHorizontally: false, pageAlignVertically: false, scaleMode: 0, fullScreenScaleMode: 0, refresh: () => undefined },
+		width: 1920,
+		height: 1080,
+		scale: {
+			parentIsWindow: false,
+			pageAlignHorizontally: false,
+			pageAlignVertically: false,
+			scaleMode: 0,
+			fullScreenScaleMode: 0,
+			refresh: () => undefined,
+		},
 		stage: { disableVisibilityChange: false, forcePortrait: false },
 		device: { desktop: true },
 		time: { events: { loop: () => 0, remove: () => undefined } },
 		camera: { shake: () => undefined },
-		load: { progress: 100, onFileComplete: { add: () => undefined }, onLoadComplete: { add: () => undefined }, start: () => undefined },
+		load: {
+			progress: 100,
+			onFileComplete: { add: () => undefined },
+			onLoadComplete: { add: () => undefined },
+			start: () => undefined,
+		},
 		add: {
 			group: () => makePhaserGroup(),
 			sprite: () => makePhaserSprite(),
 			image: () => makePhaserSprite(),
-			tween: (target: unknown) => { const t = makeTween(); t._target = target; return t; },
+			tween: (target: unknown) => {
+				const t = makeTween();
+				t._target = target;
+				return t;
+			},
 			text: () => makePhaserSprite(),
 			bitmapData: () => makePhaserBitmapData(),
 			graphics: () => makePhaserSprite(),
@@ -257,15 +346,21 @@ export function buildPhaserMock(): any {
 
 class SimSignal {
 	private listeners: Array<{ fn: (...args: any[]) => void; ctx?: any }> = [];
-	add(fn: (...args: any[]) => void, ctx?: any) { this.listeners.push({ fn, ctx }); }
-	dispatch(...args: any[]) { for (const { fn, ctx } of this.listeners) fn.apply(ctx, args); }
+	add(fn: (...args: any[]) => void, ctx?: any) {
+		this.listeners.push({ fn, ctx });
+	}
+	dispatch(...args: any[]) {
+		for (const { fn, ctx } of this.listeners) fn.apply(ctx, args);
+	}
 }
 
 // ─── jQuery mock (chainable no-op) ───────────────────────────────────────────
 
 function makeJQueryChain(): any {
 	const chain: any = new Proxy(
-		function _jq() { return chain; },
+		function _jq() {
+			return chain;
+		},
 		{
 			get(_target, prop) {
 				if (prop === 'then' || prop === Symbol.toPrimitive) return undefined;
@@ -274,7 +369,9 @@ function makeJQueryChain(): any {
 				if (prop === 'offset') return () => ({ top: 0, left: 0 });
 				return () => chain;
 			},
-			apply() { return chain; },
+			apply() {
+				return chain;
+			},
 		},
 	);
 	return chain;
@@ -287,69 +384,124 @@ class MockAnimations {
 	animationCounter = 0;
 	movementPoints = 0;
 
-	constructor(game: any) { this.game = game; }
+	constructor(game: any) {
+		this.game = game;
+	}
 
-	walk(creature: any, path: any[], opts: Record<string, any>) { this._completeMove(creature, path[path.length - 1] ?? path[0], opts); }
-	fly(creature: any, path: any[], opts: Record<string, any>) { this._completeMove(creature, path[0], opts); }
-	teleport(creature: any, path: any[], opts: Record<string, any>) { this._completeMove(creature, path[0], opts); }
-	push(creature: any, path: any[], opts: Record<string, any>) { this._completeMove(creature, path[path.length - 1] ?? path[0], opts); }
+	walk(creature: any, path: any[], opts: Record<string, any>) {
+		this._completeMove(creature, path[path.length - 1] ?? path[0], opts);
+	}
+	fly(creature: any, path: any[], opts: Record<string, any>) {
+		this._completeMove(creature, path[0], opts);
+	}
+	teleport(creature: any, path: any[], opts: Record<string, any>) {
+		this._completeMove(creature, path[0], opts);
+	}
+	push(creature: any, path: any[], opts: Record<string, any>) {
+		this._completeMove(creature, path[path.length - 1] ?? path[0], opts);
+	}
 
 	private _completeMove(creature: any, hex: any, opts: Record<string, any>) {
 		const animId = ++this.animationCounter;
 		(this.game as any).animationQueue.push(animId);
-		setTimeout(() => { this.movementComplete(creature, hex, animId, opts); }, 1);
+		setTimeout(() => {
+			this.movementComplete(creature, hex, animId, opts);
+		}, 1);
 	}
 
 	movementComplete(creature: any, _hex: any, animId: number | string, opts: Record<string, any>) {
-		if (opts?.customMovementPoint && typeof opts.customMovementPoint === 'number' && opts.customMovementPoint > 0) creature.remainingMove = this.movementPoints;
+		if (
+			opts?.customMovementPoint &&
+			typeof opts.customMovementPoint === 'number' &&
+			opts.customMovementPoint > 0
+		)
+			creature.remainingMove = this.movementPoints;
 		if (opts?.turnAroundOnComplete) creature.facePlayerDefault?.();
 		creature.healthShow?.();
 		creature.hexagons?.forEach(() => creature.pickupDrop?.());
 		(this.game as any).grid?.orderCreatureZ?.();
 		const queue = (this.game as any).animationQueue.filter((item: any) => item !== animId);
-		if (queue.length === 0) { (this.game as any).freezedInput = false; (this.game as any).grid?.refreshHoverState?.(); }
+		if (queue.length === 0) {
+			(this.game as any).freezedInput = false;
+			(this.game as any).grid?.refreshHoverState?.();
+		}
 		(this.game as any).animationQueue = queue;
 		opts?.callback?.();
 	}
 
-	death(creature: any, opts: Record<string, any>) { opts?.callback?.(); }
-	melt(creature: any, opts: Record<string, any>) { opts?.callback?.(); }
-	rise(creature: any, opts: Record<string, any>) { opts?.callback?.(); }
-	shake(creature: any, opts: Record<string, any>) { opts?.callback?.(); }
+	death(creature: any, opts: Record<string, any>) {
+		opts?.callback?.();
+	}
+	melt(creature: any, opts: Record<string, any>) {
+		opts?.callback?.();
+	}
+	rise(creature: any, opts: Record<string, any>) {
+		opts?.callback?.();
+	}
+	shake(creature: any, opts: Record<string, any>) {
+		opts?.callback?.();
+	}
 	projectile(_creature: any, _spell: any, _targets: any, _args: any, ..._rest: any[]) {
 		const sprite = { destroy: () => undefined };
-		const tween = { onComplete: { add(fn: (...a: any[]) => any, ctx?: any) { fn.call(ctx ?? sprite); } } };
+		const tween = {
+			onComplete: {
+				add(fn: (...a: any[]) => any, ctx?: any) {
+					fn.call(ctx ?? sprite);
+				},
+			},
+		};
 		return [tween, sprite];
 	}
 	startBonfireSpringTrapAnimation() {}
 	startScorchedGroundTrapAnimation() {}
-	shatterDown(creature: any, opts: Record<string, any>) { opts?.callback?.(); }
+	shatterDown(creature: any, opts: Record<string, any>) {
+		opts?.callback?.();
+	}
 	rekeyInfernalCardboardEffect() {}
 }
 
 // ─── UI / sound stubs ────────────────────────────────────────────────────────
 
 function deepNoop(): unknown {
-	const fn = function () { return deepNoop(); };
+	const fn = function () {
+		return deepNoop();
+	};
 	return new Proxy(fn, { get: () => deepNoop(), apply: () => deepNoop() });
 }
 
 function makeUiStub() {
 	const base: Record<string, unknown> = {
-		selectedAbility: -1, dashopen: false, active: false, materializeToggled: false,
-		_abilityPanelAnimating: false, logScrollEnabled: false, plasmaBars: [],
+		selectedAbility: -1,
+		dashopen: false,
+		active: false,
+		materializeToggled: false,
+		_abilityPanelAnimating: false,
+		logScrollEnabled: false,
+		plasmaBars: [],
 		chat: { hide: deepNoop(), addMsg: deepNoop(), suppressMessage: deepNoop() },
 		cardWrapper: { find: () => ({ hide: deepNoop(), show: deepNoop() }) },
 	};
 	return new Proxy(base, {
-		get(target, prop) { return prop in target ? target[prop as string] : deepNoop(); },
-		set(target, prop, value) { target[prop as string] = value; return true; },
+		get(target, prop) {
+			return prop in target ? target[prop as string] : deepNoop();
+		},
+		set(target, prop, value) {
+			target[prop as string] = value;
+			return true;
+		},
 	});
 }
 
 function makeSoundSysStub() {
 	const noop = () => undefined;
-	return { playMusic: noop, stopMusic: noop, playSFX: () => ({ stop: noop }), playHeartBeat: noop, loadSound: noop, playShout: noop };
+	return {
+		playMusic: noop,
+		stopMusic: noop,
+		playSFX: () => ({ stop: noop }),
+		playHeartBeat: noop,
+		loadSound: noop,
+		playShout: noop,
+	};
 }
 
 // ─── Headless config ─────────────────────────────────────────────────────────
@@ -403,7 +555,8 @@ async function installServerDom(): Promise<void> {
 	g.HTMLElement = dom.window.HTMLElement;
 	g.HTMLCanvasElement = dom.window.HTMLCanvasElement;
 	g.Image = dom.window.Image;
-	g.requestAnimationFrame = (cb: (t: number) => void) => setTimeout(() => cb(Date.now()), 16) as unknown as number;
+	g.requestAnimationFrame = (cb: (t: number) => void) =>
+		setTimeout(() => cb(Date.now()), 16) as unknown as number;
 	g.cancelAnimationFrame = (id: number) => clearTimeout(id);
 }
 
@@ -422,13 +575,15 @@ export async function createHeadlessGame(
 	// On the server (no DOM) install a jsdom shim before the engine constructs UI.
 	if (typeof document === 'undefined') await installServerDom();
 
-	(globalThis as { requestAnimationFrame?: any; cancelAnimationFrame?: any }).requestAnimationFrame = (_cb: () => void) => 0;
+	(
+		globalThis as { requestAnimationFrame?: any; cancelAnimationFrame?: any }
+	).requestAnimationFrame = (_cb: () => void) => 0;
 	(globalThis as { cancelAnimationFrame?: any }).cancelAnimationFrame = (_id: number) => undefined;
 
 	const config: HeadlessConfig = {
 		...DEFAULT_HEADLESS_CONFIG,
 		...(options.config ?? {}),
-		players: options.auto ? [] : (options.config?.players ?? DEFAULT_HEADLESS_CONFIG.players),
+		players: options.auto ? [] : options.config?.players ?? DEFAULT_HEADLESS_CONFIG.players,
 	};
 
 	ensureHeadlessDom();
@@ -498,7 +653,8 @@ export async function createHeadlessGame(
 					fn: (...args: unknown[]) => void,
 					delay: number,
 					...a: unknown[]
-				) => (typeof _origST === 'function' ? _origST(fn, Math.min(delay ?? 0, 1), ...a) : undefined);
+				) =>
+					typeof _origST === 'function' ? _origST(fn, Math.min(delay ?? 0, 1), ...a) : undefined;
 				try {
 					this.activate?.(args[0], args[1], args[2]);
 					this.postActivate?.();
@@ -510,17 +666,30 @@ export async function createHeadlessGame(
 			if (this.getTrigger() === 'onQuery') {
 				const animId = Math.random();
 				g.animationQueue.push(animId);
-				setTimeout(() => { if (!g.triggers?.onUnderAttack?.test?.(this.getTrigger())) activateAbility(); }, 1);
+				setTimeout(() => {
+					if (!g.triggers?.onUnderAttack?.test?.(this.getTrigger())) activateAbility();
+				}, 1);
 				setTimeout(() => {
 					const queue = g.animationQueue.filter((item: unknown) => item != animId);
-					if (queue.length === 0 && !g._deferredQueryMovePending) { g.freezedInput = false; g.grid?.refreshHoverState?.(); }
+					if (queue.length === 0 && !g._deferredQueryMovePending) {
+						g.freezedInput = false;
+						g.grid?.refreshHoverState?.();
+					}
 					g.animationQueue = queue;
 				}, 2);
 			} else {
 				activateAbility();
-				if (g.animationQueue.length === 0) { g.freezedInput = false; g.grid?.refreshHoverState?.(); }
+				if (g.animationQueue.length === 0) {
+					g.freezedInput = false;
+					g.grid?.refreshHoverState?.();
+				}
 			}
-			const iv = setInterval(() => { if (!g.freezedInput) { clearInterval(iv); opt.callback(); } }, 1);
+			const iv = setInterval(() => {
+				if (!g.freezedInput) {
+					clearInterval(iv);
+					opt.callback();
+				}
+			}, 1);
 		};
 		(AbilityClass.prototype.animation2 as { _simPatched?: boolean })._simPatched = true;
 	}
@@ -536,8 +705,13 @@ export async function createHeadlessGame(
 				fn: (...args: unknown[]) => void,
 				delay: number,
 				...a: unknown[]
-			) => (typeof _realSetInterval === 'function' ? _realSetInterval(fn, Math.min(delay, 1), ...a) : undefined);
-			try { return _origActivate.apply(this, args); } finally {
+			) =>
+				typeof _realSetInterval === 'function'
+					? _realSetInterval(fn, Math.min(delay, 1), ...a)
+					: undefined;
+			try {
+				return _origActivate.apply(this, args);
+			} finally {
 				(globalThis as { setInterval?: unknown }).setInterval = _realSetInterval;
 			}
 		};
@@ -558,7 +732,8 @@ export async function createHeadlessGame(
 				g.grid.suppressNextHoverRefresh = true;
 				this.remainingMove = 0;
 				if (g._deferredQueryMovePending > 0) g._deferredQueryMovePending--;
-				if (g._deferredQueryMovePending === 0 && g.animationQueue.length === 0) g.freezedInput = false;
+				if (g._deferredQueryMovePending === 0 && g.animationQueue.length === 0)
+					g.freezedInput = false;
 				this.turnsActive += 1;
 				this._nextGameTurnActive = g.turn + 1;
 				this.hasWait = this.isDelayed;
@@ -615,8 +790,12 @@ export async function createHeadlessGame(
 		hex.cleanOverlayVisualState = () => undefined;
 		hex.setNotTarget = () => undefined;
 		hex.unsetNotTarget = () => undefined;
-		hex.setReachable = function (this: any) { this.reachable = true; };
-		hex.unsetReachable = function (this: any) { this.reachable = false; };
+		hex.setReachable = function (this: any) {
+			this.reachable = true;
+		};
+		hex.unsetReachable = function (this: any) {
+			this.reachable = false;
+		};
 		hex.isSpinning = false;
 		hex.startSpinning = () => undefined;
 	});
@@ -637,7 +816,11 @@ export async function createHeadlessGame(
 		(this as any).creatures?.filter((c: any) => c?.temp).forEach((c: any) => c.destroy?.());
 		if (this.turnThrottle) return;
 		const opts = Object.assign({ callback: () => {}, noTooltip: false, tooltip: 'Skipped' }, o);
-		if (this.activeCreature) { this.pauseTime = 0; this.activeCreature.deactivate?.('turn-end'); this.nextCreature?.(); }
+		if (this.activeCreature) {
+			this.pauseTime = 0;
+			this.activeCreature.deactivate?.('turn-end');
+			this.nextCreature?.();
+		}
 		opts.callback?.();
 	};
 	game.delayCreature = function (this: any, o: Record<string, any> = {}) {
@@ -654,13 +837,20 @@ export async function createHeadlessGame(
 		if (this.gameState === 'ended') return;
 		this.stopTimer?.();
 		setTimeout(() => {
-			if (this.queue.isCurrentEmpty() || this.turn === 0) { this.nextRound(); return; }
+			if (this.queue.isCurrentEmpty() || this.turn === 0) {
+				this.nextRound();
+				return;
+			}
 			const next = this.queue.queue[0];
 			if (next.playable === false) {
 				this.activeCreature = next;
-				next.status.frozen = false; next.status.cryostasis = false; next.status.dizzy = false;
-				next.remainingMove = 0; next.turnsActive = (next.turnsActive ?? 0) + 1;
-				next._nextGameTurnActive = this.turn + 1; next.hasWait = false;
+				next.status.frozen = false;
+				next.status.cryostasis = false;
+				next.status.dizzy = false;
+				next.remainingMove = 0;
+				next.turnsActive = (next.turnsActive ?? 0) + 1;
+				next._nextGameTurnActive = this.turn + 1;
+				next.hasWait = false;
 				this.nextCreature?.();
 				return;
 			}
@@ -681,7 +871,11 @@ export async function createHeadlessGame(
 		}, 1);
 	};
 
-	Object.defineProperty(game, 'turnThrottle', { get: () => false, set: () => {}, configurable: true });
+	Object.defineProperty(game, 'turnThrottle', {
+		get: () => false,
+		set: () => {},
+		configurable: true,
+	});
 
 	return game;
 }
@@ -690,7 +884,10 @@ export async function createHeadlessGame(
 
 function isIdle(game: any): boolean {
 	if (game.gameState === 'ended') return true;
-	const busy = !!game.freezedInput || (game.animationQueue?.length || 0) > 0 || (game._deferredQueryMovePending || 0) > 0;
+	const busy =
+		!!game.freezedInput ||
+		(game.animationQueue?.length || 0) > 0 ||
+		(game._deferredQueryMovePending || 0) > 0;
 	return !busy;
 }
 
@@ -720,7 +917,10 @@ export async function pumpUntil(
  * human `Intent` (or the match ended). Two consecutive idle polls avoids
  * returning during the 1ms gap before `nextCreature` hands off the turn.
  */
-export async function settle(game: any, options: { maxIters?: number; maxMs?: number } = {}): Promise<void> {
+export async function settle(
+	game: any,
+	options: { maxIters?: number; maxMs?: number } = {},
+): Promise<void> {
 	const maxIters = options.maxIters ?? 20000;
 	const maxMs = options.maxMs ?? 60_000;
 	const start = Date.now();
@@ -747,13 +947,19 @@ export function applyIntent(game: any, intent: import('./authoritativeTypes').In
 			game.action({ action: 'move', target: intent.target, path: intent.path }, { callback() {} });
 			break;
 		case 'ability':
-			game.action({ action: 'ability', id: intent.id, target: intent.target, args: intent.args }, { callback() {} });
+			game.action(
+				{ action: 'ability', id: intent.id, target: intent.target, args: intent.args },
+				{ callback() {} },
+			);
 			break;
 	}
 }
 
 /** The authoritative server step: apply an intent, then wait for the engine to settle. */
-export async function stepGame(game: any, intent: import('./authoritativeTypes').Intent): Promise<any> {
+export async function stepGame(
+	game: any,
+	intent: import('./authoritativeTypes').Intent,
+): Promise<any> {
 	applyIntent(game, intent);
 	await settle(game);
 	return game;
@@ -768,28 +974,26 @@ export function serializeState(game: any): import('./authoritativeTypes').Author
 		score: p.getScore?.().total ?? 0,
 	}));
 
-	const creatures = (game.creatures || [])
-		.filter(Boolean)
-		.map((c: any) => ({
-			id: c.id,
-			type: c.type,
-			name: c.name,
-			x: c.x,
-			y: c.y,
-			health: c.health,
-			maxHealth: c.stats?.health ?? c.health,
-			energy: c.energy,
-			maxEnergy: c.stats?.energy ?? c.energy,
-			dead: !!c.dead,
-			vaporized: !!c.isVaporized,
-			remainingMove: c.remainingMove,
-			playerIndex: c.player?.id ?? null,
-			status: {
-				frozen: !!c.status?.frozen,
-				dizzy: !!c.status?.dizzy,
-				cryostasis: !!c.status?.cryostasis,
-			},
-		}));
+	const creatures = (game.creatures || []).filter(Boolean).map((c: any) => ({
+		id: c.id,
+		type: c.type,
+		name: c.name,
+		x: c.x,
+		y: c.y,
+		health: c.health,
+		maxHealth: c.stats?.health ?? c.health,
+		energy: c.energy,
+		maxEnergy: c.stats?.energy ?? c.energy,
+		dead: !!c.dead,
+		vaporized: !!c.isVaporized,
+		remainingMove: c.remainingMove,
+		playerIndex: c.player?.id ?? null,
+		status: {
+			frozen: !!c.status?.frozen,
+			dizzy: !!c.status?.dizzy,
+			cryostasis: !!c.status?.cryostasis,
+		},
+	}));
 
 	const queue = (game.queue?.queue || []).map((c: any) => c.id);
 
@@ -816,7 +1020,9 @@ export async function replayIntents(
 	config: Partial<HeadlessConfig>,
 	intents: import('./authoritativeTypes').Intent[],
 ): Promise<any> {
-	const game = await createHeadlessGame(abilities, { config: { ...config, players: config.players ?? DEFAULT_HEADLESS_CONFIG.players } });
+	const game = await createHeadlessGame(abilities, {
+		config: { ...config, players: config.players ?? DEFAULT_HEADLESS_CONFIG.players },
+	});
 	for (const intent of intents) {
 		applyIntent(game, intent);
 		await settle(game);

@@ -139,7 +139,9 @@ export class DevvitTransport implements ITransport {
 		await this.send(data);
 	}
 
-	async fetchMessagesAfter(afterOrder: number): Promise<Array<{ cursor: string; from: PeerId; message: GameMessage }>> {
+	async fetchMessagesAfter(
+		afterOrder: number,
+	): Promise<Array<{ cursor: string; from: PeerId; message: GameMessage }>> {
 		if (this.disconnected) {
 			return [];
 		}

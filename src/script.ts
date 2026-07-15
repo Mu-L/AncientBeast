@@ -523,7 +523,8 @@ $j(() => {
 			const $createButton = $j('#createLobbyButton');
 			$createButton.val('Starting match');
 			window.setTimeout(
-				() => G.startMultiplayerMatch(getGameConfig() as unknown as import('./multiplayer').GameConfig),
+				() =>
+					G.startMultiplayerMatch(getGameConfig() as unknown as import('./multiplayer').GameConfig),
 				800,
 			);
 			return;
@@ -819,13 +820,15 @@ function setupDevvitQueueUi(playerId: string) {
 	refreshDevvitMatchesCounter();
 	window.setInterval(refreshDevvitMatchesCounter, 8000);
 
-	$j('#devvitQueueButton').off('click').on('click', () => {
-		if (devvitQueueActive) {
-			leaveDevvitQueue(playerId);
-		} else {
-			joinDevvitQueue(playerId);
-		}
-	});
+	$j('#devvitQueueButton')
+		.off('click')
+		.on('click', () => {
+			if (devvitQueueActive) {
+				leaveDevvitQueue(playerId);
+			} else {
+				joinDevvitQueue(playerId);
+			}
+		});
 
 	if (devvitQueueMatchPendingNavigation) {
 		setDevvitQueueButtonState('matched');

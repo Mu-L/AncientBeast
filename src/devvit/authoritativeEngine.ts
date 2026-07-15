@@ -31,10 +31,7 @@ export class LobbyEngine {
 
 	private readonly config: Partial<HeadlessConfig>;
 
-	private constructor(
-		config: Partial<HeadlessConfig>,
-		abilities: Array<(G: any) => void>,
-	) {
+	private constructor(config: Partial<HeadlessConfig>, abilities: Array<(G: any) => void>) {
 		this.config = config;
 		void abilities;
 	}
@@ -44,7 +41,9 @@ export class LobbyEngine {
 		abilities: Array<(G: any) => void> = [],
 	): Promise<LobbyEngine> {
 		const engine = new LobbyEngine(config, abilities);
-		engine.game = await createHeadlessGame(abilities, { config: { ...config, players: config.players } });
+		engine.game = await createHeadlessGame(abilities, {
+			config: { ...config, players: config.players },
+		});
 		return engine;
 	}
 
@@ -64,7 +63,9 @@ export class LobbyEngine {
 		abilities: Array<(G: any) => void> = [],
 	): Promise<LobbyEngine> {
 		const engine = new LobbyEngine(config, abilities);
-		engine.game = await createHeadlessGame(abilities, { config: { ...config, players: config.players } });
+		engine.game = await createHeadlessGame(abilities, {
+			config: { ...config, players: config.players },
+		});
 		for (const intent of intents) {
 			applyIntent(engine.game, intent);
 			await settle(engine.game);

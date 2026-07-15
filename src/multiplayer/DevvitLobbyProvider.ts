@@ -32,7 +32,7 @@ export class DevvitLobbyProvider implements INetworkBackend {
 	private gapRecoveryInFlight = false;
 	private gapRecoveryAttempts = 0;
 	private awaitingSyncSnapshot = false;
- 
+
 	private static readonly GAP_RECOVERY_DELAY_MS = 300;
 	private static readonly GAP_RECOVERY_MAX_ATTEMPTS = 2;
 
@@ -222,7 +222,10 @@ export class DevvitLobbyProvider implements INetworkBackend {
 		// so re-applying its own echoed action would duplicate the effect (stacked units,
 		// double turn-activation, etc.). Peer mode avoids this via sendExcept(peerId,...).
 		// Mirror that here: ignore action messages that originated from this client.
-		if (peerId === this.transport.getMyId() && (isSelfAppliedActionMessage(message) || message.type === 'intent')) {
+		if (
+			peerId === this.transport.getMyId() &&
+			(isSelfAppliedActionMessage(message) || message.type === 'intent')
+		) {
 			return;
 		}
 
@@ -422,9 +425,7 @@ export class DevvitLobbyProvider implements INetworkBackend {
 			type: 'sync-snapshot',
 			playerId: message.playerId,
 			config: this.state.config,
-			reason:
-				message.reason ||
-				`resync requested at order ${String(message.expectedServerOrder)}`,
+			reason: message.reason || `resync requested at order ${String(message.expectedServerOrder)}`,
 		});
 	}
 

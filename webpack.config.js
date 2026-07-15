@@ -169,8 +169,10 @@ module.exports = (env, argv) => {
 				phaser: phaser,
 				assets: path.resolve(__dirname, 'assets/'),
 				modules: path.join(__dirname, 'node_modules'),
+				underscore: path.resolve(__dirname, 'node_modules/underscore/underscore-umd.js'),
 			},
 			extensions: ['.ts', '.js'],
+			conditionNames: ['browser', 'import', 'require', 'default'],
 			fallback: {
 				fs: false,
 			},
@@ -229,6 +231,12 @@ module.exports = (env, argv) => {
 				defaults: './.env.example',
 				silent: true,
 			}),
+		],
+		ignoreWarnings: [
+			{
+				module: /@protobufjs\/inquire/,
+				message: /Critical dependency: the request of a dependency is an expression/,
+			},
 		],
 		performance: {
 			hints: false,

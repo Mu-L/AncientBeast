@@ -1,5 +1,4 @@
 import { pretty as gameVersion } from './version';
-import { context } from '@devvit/web/client';
 
 /**
  * Devvit experience version (e.g. "0.0.51"). Only populated inside a Devvit
@@ -8,7 +7,15 @@ import { context } from '@devvit/web/client';
  * reading it here is safe. Returns `undefined` on the standalone site.
  */
 export function getDevvitAppVersion(): string | undefined {
-	return context?.appVersion;
+	// Lazy import so the standalone site bundle doesn't pull in the Devvit
+	// client package, which only exposes `context` under the browser export.
+	try {
+		// eslint-disable-next-line @typescript-eslint/no-var-requires
+		const { context } = require('@devvit/web/client');
+		return context?.appVersion;
+	} catch {
+		return undefined;
+	}
 }
 
 /**

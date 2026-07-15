@@ -15,7 +15,11 @@ jest.mock(
 		AUTO: 0,
 		CANVAS: 1,
 		ScaleManager: { SHOW_ALL: 0 },
-		Easing: { Linear: { None: 'Linear.None' }, Quadratic: { In: 'Quad.In', Out: 'Quad.Out', InOut: 'Quad.InOut' }, Back: { Out: 'Back.Out' } },
+		Easing: {
+			Linear: { None: 'Linear.None' },
+			Quadratic: { In: 'Quad.In', Out: 'Quad.Out', InOut: 'Quad.InOut' },
+			Back: { Out: 'Back.Out' },
+		},
 		blendModes: { ADD: 1, NORMAL: 0 },
 		default: class PhaserMock {},
 	}),
@@ -41,11 +45,29 @@ jest.mock('phaser-ce', () => ({
 		dispatch() {}
 	},
 	Game: class PhaserGame {
-		scale = { parentIsWindow: false, pageAlignHorizontally: false, pageAlignVertically: false, scaleMode: 0, fullScreenScaleMode: 0, refresh() {} };
+		scale = {
+			parentIsWindow: false,
+			pageAlignHorizontally: false,
+			pageAlignVertically: false,
+			scaleMode: 0,
+			fullScreenScaleMode: 0,
+			refresh() {},
+		};
 		stage = { disableVisibilityChange: false, forcePortrait: false };
 		device = { desktop: true };
 		add = {
-			group: () => ({ add: () => ({}), position: { set: () => {} }, scale: { setTo: () => {}, set: () => {} }, children: [] as unknown[], create: () => ({}), forEach: () => {}, sendToBack: () => {}, bringToTop: () => {}, sort: () => {}, destroy: () => {} }),
+			group: () => ({
+				add: () => ({}),
+				position: { set: () => {} },
+				scale: { setTo: () => {}, set: () => {} },
+				children: [] as unknown[],
+				create: () => ({}),
+				forEach: () => {},
+				sendToBack: () => {},
+				bringToTop: () => {},
+				sort: () => {},
+				destroy: () => {},
+			}),
 			sprite: () => ({ anchor: { setTo: () => {} }, events: {} }),
 		};
 	},
@@ -55,12 +77,25 @@ jest.mock('phaser-ce', () => ({
 // (same role botgeria's makeUiStub plays, applied at module load so setup()'s
 // `new UI()` never touches the real DOM).
 jest.mock('../../ui/interface', () => {
-	const deepNoop = () => new Proxy(function () {}, { get: () => deepNoop(), apply: () => deepNoop() });
+	const deepNoop = () =>
+		new Proxy(function () {}, { get: () => deepNoop(), apply: () => deepNoop() });
 	class UIStub {
 		constructor() {
 			return new Proxy(
-				{ selectedAbility: -1, active: false, dashopen: false, materializeToggled: false, _abilityPanelAnimating: false },
-				{ get: (t, p) => (p in t ? (t as any)[p] : deepNoop()), set: (t, p, v) => { (t as any)[p] = v; return true; } },
+				{
+					selectedAbility: -1,
+					active: false,
+					dashopen: false,
+					materializeToggled: false,
+					_abilityPanelAnimating: false,
+				},
+				{
+					get: (t, p) => (p in t ? (t as any)[p] : deepNoop()),
+					set: (t, p, v) => {
+						(t as any)[p] = v;
+						return true;
+					},
+				},
 			);
 		}
 	}

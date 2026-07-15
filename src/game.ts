@@ -922,10 +922,16 @@ export default class Game {
 					this.action({ action: 'delay' }, { callback() {} });
 					break;
 				case 'move':
-					this.action({ action: 'move', target: intent.target, path: intent.path }, { callback() {} });
+					this.action(
+						{ action: 'move', target: intent.target, path: intent.path },
+						{ callback() {} },
+					);
 					break;
 				case 'ability':
-					this.action({ action: 'ability', id: intent.id, target: intent.target, args: intent.args }, { callback() {} });
+					this.action(
+						{ action: 'ability', id: intent.id, target: intent.target, args: intent.args },
+						{ callback() {} },
+					);
 					break;
 			}
 			return;
@@ -1484,7 +1490,6 @@ export default class Game {
 		if (!remote && this.isOtherPlayersTurn()) {
 			return;
 		}
-
 
 		if (this.turnThrottle && !remote) {
 			return;
