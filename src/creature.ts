@@ -876,22 +876,30 @@ export class Creature {
 							.start();
 					}
 
-					game.gamelog.add({
-						action: 'move',
+					// Calculate the path once here so the exact same route is recorded
+					// in the gamelog, sent to the other multiplayer client, AND animated
+					// locally — one canonical record instead of three independently-built
+					// descriptions of the same move. See Creature.moveTo()'s `opts.path`
+					// handling and Game.action()'s 'move' case (the same dispatcher used
+					// for saved-log replay) for why the applier must not recalculate this.
+					const isFlying = args.creature.movementType() === 'flying';
+					const movePath = isFlying ? [hex] : args.creature.calculatePath({ x: hex.x, y: hex.y });
+					const moveRecord = {
+						action: 'move' as const,
 						target: {
 							x: hex.x,
 							y: hex.y,
 						},
-					});
+						path: movePath.map((pathHex) => ({ x: pathHex.x, y: pathHex.y })),
+					};
+					game.gamelog.add(moveRecord);
 					if (game.multiplayer) {
-						game.sendMultiplayerMove({
-							x: hex.x,
-							y: hex.y,
-						});
+						game.sendMultiplayerMove(moveRecord.target, moveRecord.path);
 					}
 					game.UI.btnDelay.changeState('disabled');
 					args.creature.moveTo(hex, {
-						animation: args.creature.movementType() === 'flying' ? 'fly' : 'walk',
+						animation: isFlying ? 'fly' : 'walk',
+						path: movePath,
 						callback: function () {
 							game.activeCreature.queryMove();
 						},
@@ -1197,7 +1205,16 @@ export class Creature {
 			const x = hex.x;
 			const y = hex.y;
 
-			if (opts.ignorePath || opts.animation == 'fly') {
+			// In multiplayer, the acting client sends the exact path it already
+			// calculated (see Creature.queryMove()) so the receiving client replays
+			// that same path instead of re-running pathfinding against its own grid
+			// state. Two clients independently calling calculatePath() can walk
+			// different (or even unreachable) routes if their grid state has
+			// drifted apart even slightly, visibly desyncing where the creature
+			// ends up. `opts.path`, when given, is the source of truth.
+			if (opts.path && opts.path.length) {
+				path = opts.path;
+			} else if (opts.ignorePath || opts.animation == 'fly') {
 				path = [hex];
 			} else {
 				path = this.calculatePath({ x, y });
@@ -1903,8 +1920,12 @@ export class Creature {
 	/**
 	 * Play kill animation. Remove creature from queue and from hexes.
 	 * @param{Creature | {player:Player}} killerCreature - Killer of this creature
+	 * @param{boolean} remote - True when this death is being applied because the
+	 * other multiplayer client authoritatively reported it (see the
+	 * 'creature-died' message in Game.handleLobbyMessage) rather than computed
+	 * locally. Suppresses re-broadcasting to avoid an echo loop.
 	 */
-	die(killerCreature: Creature | { player: Player }) {
+	die(killerCreature: Creature | { player: Player }, remote = false) {
 		const game = this.game;
 
 		this.dead = true;
@@ -1929,7 +1950,7 @@ export class Creature {
 				if (!this._brbState) return; // already resolved (revived or died)
 				const savedState = this._brbState;
 				this._brbState = null;
-				this.die(destroyer ?? savedState.killer);
+				this.die(destroyer ?? savedState.killer, remote);
 			};
 
 			// Clear the hex first so the trap spot is immediately walkable
@@ -1960,6 +1981,29 @@ export class Creature {
 		game.log('%CreatureName' + this.id + '% is dead');
 		this.killer = killerCreature.player;
 		const isDeny = this.killer.flipped == this.player.flipped;
+
+		// Make death authoritative over the network instead of trusting the two
+		// clients' independent damage/effect computations to always agree on the
+		// outcome. Gated the same way as nextCreature()'s turn-update broadcast:
+		// only the client whose player controls the currently active creature (the
+		// one whose action caused this) is the source of truth, so both clients
+		// don't race to report the same death. `remote` (this death being applied
+		// because of an incoming 'creature-died' message) always suppresses
+		// re-broadcasting to avoid an echo loop.
+		if (
+			!remote &&
+			game.multiplayer &&
+			game.lobby &&
+			game.activeCreature?.player?.controller !== 'bot' &&
+			game.lobby.isMyTurn()
+		) {
+			game.lobby.sendAction({
+				type: 'creature-died',
+				creatureId: this.id,
+				killerId: killerCreature instanceof Creature ? killerCreature.id : undefined,
+				playerId: game.lobby.getLocalPlayer()?.playerId || '',
+			});
+		}
 
 		// Drop item
 		if (game.unitDrops == 1 && this.drop) {

@@ -8,6 +8,7 @@ import { Trap } from './utility/trap';
 import { Ability } from './ability';
 import { QuadraticCurve } from './utility/curve';
 import { DEBUG_ENABLE_FAST_WALKING, DEBUG_WALK_SPEED_MS } from './debug';
+import { isDocumentHidden } from './utility/time';
 
 // to fix @ts-expect-error 2554: properly type the arguments for the trigger functions in `game.ts`
 
@@ -830,7 +831,11 @@ export class Animations {
 				...opts,
 			};
 
-			creature.creatureSprite.setHex(nextPos, speed).then(() => {
+			// Re-checked every step (not just once up front) so a tab that gets
+			// backgrounded mid-walk also collapses its remaining steps instead of
+			// crawling along at Phaser's throttled background tick rate.
+			const stepSpeed = isDocumentHidden() ? 0 : speed;
+			creature.creatureSprite.setHex(nextPos, stepSpeed).then(() => {
 				if (creature.dead) {
 					// Stop moving if creature has died while moving
 					this.movementComplete(creature, hex, animId, opts);
@@ -885,7 +890,7 @@ export class Animations {
 
 		const durationMS = !opts.overrideSpeed ? creature.animation.walk_speed : opts.overrideSpeed;
 
-		creature.creatureSprite.setHex(currentHex, durationMS).then(() => {
+		creature.creatureSprite.setHex(currentHex, isDocumentHidden() ? 0 : durationMS).then(() => {
 			// Sound Effect
 			game.soundsys.playSFX('sounds/step');
 

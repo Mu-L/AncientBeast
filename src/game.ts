@@ -23,7 +23,7 @@ import type {
 	LobbySession,
 	LobbyState,
 } from './multiplayer';
-import { sleep } from './utility/time';
+import { getVisibilityAwareDelay, sleep } from './utility/time';
 import { DEBUG_DISABLE_GAME_STATUS_CONSOLE_LOG, DEBUG_DISABLE_MUSIC } from './debug';
 import { Point, configure as configurePointFacade } from './utility/pointfacade';
 import { pretty as version } from './utility/version';
@@ -187,6 +187,17 @@ export default class Game {
 		this.Phaser = new Phaser.Game(1920, 1080, renderer, 'combatwrapper', {
 			update: this.phaserUpdate.bind(this),
 			render: this.phaserRender.bind(this),
+			// Browsers fully suspend native requestAnimationFrame (not just throttle it)
+			// once a tab is hidden/backgrounded. Phaser's TweenManager (movement/ability
+			// animations) and its whole update loop run off that rAF, so a backgrounded
+			// client's creature moves/abilities would completely freeze mid-animation —
+			// never dispatching movementComplete/activateAbility, never advancing the
+			// turn — until the tab regains focus. That is the "moves desync between
+			// tabs" symptom seen when testing two clients side-by-side with one
+			// unfocused. Forcing Phaser onto a setTimeout-driven loop in multiplayer
+			// keeps it ticking (just throttled, like our other multiplayer timers)
+			// instead of fully stopping while backgrounded.
+			forceSetTimeOut: this.multiplayer,
 		});
 		// Note: Scale manager configuration happens in setup() after Phaser is ready
 	}
@@ -903,9 +914,25 @@ export default class Game {
 		if (message.type === 'match-loaded') {
 			return;
 		}
+		if (message.type === 'sync-snapshot') {
+			// Devvit snapshots currently carry only config, not full board state.
+			// Reloading an active match here desynchronizes clients (different maps,
+			// missing priests, repeated round logs). Only allow bootstrap-time use.
+			if (this.gameState === 'initialized' || this.gameState === 'ended') {
+				this.multiplayer = true;
+				this.loadGame(message.config as Partial<GameConfig>, true);
+			}
+			return;
+		}
 		if (message.type === 'turn-update') {
+			if (message.turn > this.turn) {
+				this.turn = message.turn;
+			}
 			const creature = this.creatures[message.creatureId];
 			if (creature) {
+				if (this.activeCreature?.id === creature.id) {
+					return;
+				}
 				this.activeCreature = creature;
 				creature.activate();
 				this.UI.updateActivebox();
@@ -930,11 +957,13 @@ export default class Game {
 			const creature = this.creatures[message.creatureId];
 			if (creature) {
 				this.activeCreature = creature;
-				const hex = this.grid.hexes[message.target.y][message.target.x];
-				creature.moveTo(hex, {
-					callback: () => {
-						creature.queryMove();
-					},
+				// Shares applyMoveRecord() with action() (the saved-log replay
+				// dispatcher) instead of a second hand-rolled implementation of
+				// "apply a move action" — one canonical code path for both, so fixes
+				// (like replaying the exact recorded path) can't drift out of sync
+				// between live multiplayer relay and file replay.
+				this.applyMoveRecord({ target: message.target, path: message.path }, () => {
+					creature.queryMove();
 				});
 			}
 			return;
@@ -987,13 +1016,17 @@ export default class Game {
 		}
 	}
 
-	sendMultiplayerMove(target: { x: number; y: number }): void {
+	sendMultiplayerMove(
+		target: { x: number; y: number },
+		path?: Array<{ x: number; y: number }>,
+	): void {
 		if (!this.multiplayer || !this.lobby || !this.activeCreature) {
 			return;
 		}
 		this.lobby.sendAction({
 			type: 'action-move',
 			target,
+			path,
 			playerId: this.lobby.getLocalPlayer()?.playerId || '',
 			creatureId: this.activeCreature.id,
 		});
@@ -1045,6 +1078,17 @@ export default class Game {
 	 * Activate the next creature in queue
 	 */
 	nextCreature(remote?: boolean) {
+		// Captured before any reassignment below so the broadcast gate can tell
+		// whose turn is actually ending. This matters when nextCreature() is
+		// invoked indirectly (e.g. Creature.die() ending the active creature's
+		// turn as a side effect of an ability) rather than via a direct local
+		// skipTurn/delayCreature call carrying an explicit `remote` flag. In
+		// Devvit mode, opponent actions (moves/abilities) are replayed locally
+		// via the same code path that a live action takes, so without this check
+		// BOTH clients would end up broadcasting their own 'turn-update' for the
+		// same transition, causing races between the two players' turn state.
+		const previousActiveCreature = this.activeCreature;
+
 		this.UI.closeDash();
 		this.UI.btnToggleDash.changeState('normal');
 		this.grid.clearAllXray(); // Clear Xray without re-triggering ghostOverlap
@@ -1054,7 +1098,7 @@ export default class Game {
 		}
 
 		this.stopTimer();
-		// Delay
+		// Delay (skipped while backgrounded — see getVisibilityAwareDelay)
 		setTimeout(() => {
 			const interval = setInterval(() => {
 				clearInterval(interval);
@@ -1111,17 +1155,27 @@ export default class Game {
 				this.UI.updateActivebox();
 				this.updateQueueDisplay();
 				this.signals.creature.dispatch('activate', { creature: this.activeCreature });
-				if (this.multiplayer && this.playersReady && this.lobby) {
+				// Only the client whose own player controlled the *outgoing* creature
+				// broadcasts the turn transition. Without this, a locally-replayed
+				// remote action that ends in the opponent's creature dying (and thus
+				// ending its own turn) would cause this client to also broadcast a
+				// 'turn-update', racing with the authoritative one from the acting
+				// client and desyncing whose turn each side thinks it is.
+				const localPlayerIndex = this.lobby?.getLocalPlayer()?.playerIndex;
+				const wasLocalPlayersTurn =
+					!previousActiveCreature || previousActiveCreature.player.id === localPlayerIndex;
+				if (this.multiplayer && this.playersReady && this.lobby && !remote && wasLocalPlayersTurn) {
 					this.lobby.sendAction({
 						type: 'turn-update',
 						playerId: this.lobby.getLocalPlayer()?.playerId || '',
 						creatureId: this.activeCreature.id,
+						turn: this.turn,
 					});
 				} else {
 					this.playersReady = true;
 				}
-			}, 50);
-		}, 300);
+			}, getVisibilityAwareDelay(50));
+		}, getVisibilityAwareDelay(300));
 	}
 
 	updateQueueDisplay(excludeActiveCreature?) {
@@ -1180,11 +1234,39 @@ export default class Game {
 	}
 
 	/**
+	 * Only true when this client is NOT authoritative for the currently active
+	 * creature's turn in a multiplayer match (i.e. it belongs to the other
+	 * human player). Automatic turn-ending triggers (turn timer expiry,
+	 * frozen/dizzy/dazzled/BRB status in Creature.activate()) run locally on
+	 * every client, so without this check both clients could independently
+	 * skip and broadcast for the same turn transition, double-advancing the
+	 * queue on whichever client applies both its own and the echoed remote
+	 * skip. Bot-controlled creatures are exempt since bots run locally on
+	 * every client rather than being owned by a specific human player.
+	 */
+	private isOtherPlayersTurn(): boolean {
+		return (
+			this.multiplayer &&
+			!!this.lobby &&
+			this.activeCreature?.player?.controller !== 'bot' &&
+			!this.lobby.isMyTurn()
+		);
+	}
+
+	/**
 	 * End turn for the current unit
 	 */
 	skipTurn(o?, remote?: boolean) {
+		if (!remote && this.isOtherPlayersTurn()) {
+			return;
+		}
+
 		// NOTE: If skipping a turn and there is a temp creature, destroy it.
 		this.creatures.filter((c) => c?.temp).forEach((c) => c.destroy());
+
+		if (this.turnThrottle && !remote) {
+			return;
+		}
 
 		if (!remote && this.multiplayer && this.lobby) {
 			this.lobby.sendAction({
@@ -1193,10 +1275,6 @@ export default class Game {
 				playerId: this.lobby.getLocalPlayer()?.playerId || '',
 				creatureId: this.activeCreature?.id || 0,
 			});
-		}
-
-		if (this.turnThrottle && !remote) {
-			return;
 		}
 
 		o = $j.extend(
@@ -1258,6 +1336,18 @@ export default class Game {
 	 */
 
 	delayCreature(o?, remote?: boolean) {
+		if (!this.activeCreature?.canWait || this.queue.isCurrentEmpty()) {
+			return;
+		}
+
+		if (!remote && this.isOtherPlayersTurn()) {
+			return;
+		}
+
+		if (this.turnThrottle && !remote) {
+			return;
+		}
+
 		if (!remote && this.multiplayer && this.lobby) {
 			this.lobby.sendAction({
 				type: 'action-end',
@@ -1265,14 +1355,6 @@ export default class Game {
 				playerId: this.lobby.getLocalPlayer()?.playerId || '',
 				creatureId: this.activeCreature?.id || 0,
 			});
-		}
-
-		if (this.turnThrottle && !remote) {
-			return;
-		}
-
-		if (!this.activeCreature?.canWait || this.queue.isCurrentEmpty()) {
-			return;
 		}
 
 		o = $j.extend(
@@ -1824,6 +1906,30 @@ export default class Game {
 		this.UI.endGame();
 	}
 
+	/**
+	 * Apply a recorded/relayed "move" action to the current activeCreature.
+	 * Shared by action() (saved-log replay) and handleLobbyMessage()'s
+	 * 'action-move' case (live multiplayer relay) so there's exactly one place
+	 * that knows how to turn a move record into a real move — see
+	 * Creature.moveTo()'s `opts.path` handling for why replaying the exact
+	 * recorded path (rather than recalculating pathfinding) matters for
+	 * multiplayer sync.
+	 */
+	private applyMoveRecord(
+		record: { target: { x: number; y: number }; path?: Array<{ x: number; y: number }> },
+		callback?: () => void,
+	) {
+		const hex = this.grid.hexes[record.target.y][record.target.x];
+		const path = record.path
+			?.map((p) => this.grid.hexes[p.y]?.[p.x])
+			.filter((pathHex): pathHex is Hex => Boolean(pathHex));
+		this.activeCreature.moveTo(hex, {
+			path: path && path.length ? path : undefined,
+			// eslint-disable-next-line @typescript-eslint/no-empty-function
+			callback: callback ?? function () {},
+		});
+	}
+
 	action(o, opt) {
 		const defaultOpt = {
 			// eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -1835,9 +1941,7 @@ export default class Game {
 		this.clearOncePerDamageChain();
 		switch (o.action) {
 			case 'move':
-				this.activeCreature.moveTo(this.grid.hexes[o.target.y][o.target.x], {
-					callback: opt.callback,
-				});
+				this.applyMoveRecord(o, opt.callback);
 				break;
 			case 'skip':
 				this.skipTurn({
