@@ -24,7 +24,7 @@ import { CreatureType } from '../data/types';
 import { getAvatarSet } from '../style/avatar-styles';
 import { applyBuffDebuffStyle } from './buffs-debuffs';
 import { getSummonCandidates } from '../utility/summon-candidates';
-import { OpenCollectiveBanner } from './open-collective-banner';
+import { OpenCollectiveBanner, isThirdPartyContentBlocked } from './open-collective-banner';
 
 const SECRET_VIEW_ID = 'ab-secret-view';
 const GAME_IN_PROGRESS_UNLOAD_CONFIRMATION =
@@ -620,6 +620,7 @@ export class UI {
 				this.closeDash();
 			},
 			isViewOpen: () => this.dashopen,
+			hidden: isThirdPartyContentBlocked(),
 		});
 		this.scoreboardOpenCollectiveBanner = new OpenCollectiveBanner({
 			bannerSelector: '#opencollective_banner_scoreboard',
@@ -627,6 +628,7 @@ export class UI {
 				this.closeScoreboard();
 			},
 			isViewOpen: () => !this.$scoreboard.hasClass('hide'),
+			hidden: isThirdPartyContentBlocked(),
 		});
 		this.musicPlayerOpenCollectiveBanner = new OpenCollectiveBanner({
 			bannerSelector: '#opencollective_banner_musicplayer',
@@ -634,6 +636,7 @@ export class UI {
 				this.toggleMusicPlayer(false);
 			},
 			isViewOpen: () => !$j('#musicplayerwrapper').hasClass('hide'),
+			hidden: isThirdPartyContentBlocked(),
 		});
 		this.dashOpenCollectiveBanner.init();
 		this.scoreboardOpenCollectiveBanner.init();
@@ -1457,6 +1460,11 @@ export class UI {
 		this.dashopen = false;
 
 		this.glowInterval = setInterval(() => {
+			// Guard against a torn-down game (e.g. between matches) so a stray tick
+			// can't throw "can't access property 'allhexes', e.grid is null".
+			if (!game.grid || !game.grid.allhexes) {
+				return;
+			}
 			const opa =
 				0.5 +
 				// eslint-disable-next-line prettier/prettier

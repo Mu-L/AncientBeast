@@ -9,7 +9,7 @@ import type {
 	LobbyState,
 	PeerId,
 } from './types';
-import { generateLobbyCode } from './types';
+import { generateLobbyCode, isSelfAppliedActionMessage } from './types';
 
 interface CreateLobbyResponse {
 	code: LobbyCode;
@@ -81,6 +81,12 @@ export class DevvitLobbyProvider implements INetworkBackend {
 			this.pendingJoinReject = undefined;
 			throw error;
 		}
+
+		// The server decides host status authoritatively (first to join an empty lobby
+		// becomes host) — read the real result back rather than assuming `isHost: false`
+		// just because that's what we requested. This matters for matchmaking-created
+		// lobbies, where neither joining player explicitly "creates" it.
+		this.isHostFlag = this.transport.isHostPeer();
 
 		const myPeerId = this.transport.getMyId();
 
@@ -161,6 +167,16 @@ export class DevvitLobbyProvider implements INetworkBackend {
 	}
 
 	private handleTransportMessage(message: GameMessage, peerId: PeerId): void {
+		// In Devvit mode the server relays every message to ALL clients, including the
+		// sender. The acting client already applies action messages locally (e.g.
+		// Ability.animation -> animation2 -> activate -> player.summon for materialize),
+		// so re-applying its own echoed action would duplicate the effect (stacked units,
+		// double turn-activation, etc.). Peer mode avoids this via sendExcept(peerId,...).
+		// Mirror that here: ignore action messages that originated from this client.
+		if (peerId === this.transport.getMyId() && isSelfAppliedActionMessage(message)) {
+			return;
+		}
+
 		if (message.type === 'player-joined') {
 			this.handlePlayerJoined(message.player, peerId);
 			return;
@@ -330,7 +346,7 @@ export class DevvitLobbyProvider implements INetworkBackend {
 				this.pendingJoinResolve = undefined;
 				this.pendingJoinReject = undefined;
 				reject(new Error('Timed out waiting for lobby host'));
-			}, 3000);
+			}, 30000);
 
 			this.pendingJoinResolve = (session) => {
 				window.clearTimeout(timeout);

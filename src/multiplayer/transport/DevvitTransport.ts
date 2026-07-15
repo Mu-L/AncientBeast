@@ -37,6 +37,7 @@ export class DevvitTransport implements ITransport {
 	private isHost = false;
 	private disconnected = false;
 	private pollTimer: number | null = null;
+	private pollInFlight = false;
 	private cursor = '';
 	private knownPeerIds = new Set<PeerId>();
 	private lobbyCode = '';
@@ -55,10 +56,10 @@ export class DevvitTransport implements ITransport {
 		this.disconnected = false;
 		this.cursor = '';
 		this.knownPeerIds.clear();
-		this.messageHandlers.length = 0;
-		this.peerJoinHandlers.length = 0;
-		this.peerLeaveHandlers.length = 0;
-		this.connectedHandlers.length = 0;
+		// Do NOT clear messageHandlers/peerJoinHandlers/etc. here — the provider registers
+		// those callbacks once in its constructor (before connect() is ever called), so
+		// clearing them would leave the transport permanently deaf to all messages.
+		this.connectedHandlersFired = false;
 
 		const fetchImpl = this.deps.fetchImpl ?? fetch;
 
@@ -148,6 +149,14 @@ export class DevvitTransport implements ITransport {
 		return this.myId;
 	}
 
+	// Server decides host status authoritatively when joining (see routes/lobby.ts) — this
+	// exposes the real result from `connect()`'s join response, rather than the requested
+	// `isHost` option, which may not match (e.g. two players joining a matchmaking-created
+	// lobby both request `isHost: false`, but the server designates the first one as host).
+	isHostPeer(): boolean {
+		return this.isHost;
+	}
+
 	private startPolling(fetchImpl: typeof fetch): void {
 		if (this.pollTimer !== null) {
 			clearInterval(this.pollTimer);
@@ -157,6 +166,16 @@ export class DevvitTransport implements ITransport {
 			if (this.disconnected) {
 				return;
 			}
+
+			// Guard against overlapping polls: if a previous poll is still awaiting its
+			// network responses, the next interval tick would fetch the same `after`
+			// cursor and reprocess (duplicate) every message in that window. Running a
+			// single poll at a time keeps the cursor monotonic and guarantees each
+			// message is delivered exactly once.
+			if (this.pollInFlight) {
+				return;
+			}
+			this.pollInFlight = true;
 
 			try {
 				const base =
@@ -180,11 +199,16 @@ export class DevvitTransport implements ITransport {
 				stateUrl.searchParams.set('playerId', this.myId);
 				const stateRes = await fetchImpl(stateUrl.toString(), { method: 'GET' });
 
-				if (!stateRes.ok || this.disconnected) {
+				if (this.disconnected) {
 					return;
 				}
 
-				const state = (await stateRes.json()) as LobbyStateResponse;
+				// A transient /state 404 (e.g. lobby not yet visible in Redis right after
+				// matchmaking creates it) must not block message processing — we still need
+				// to fire connectResolve and messageHandlers for entries we already fetched.
+				const state: LobbyStateResponse | null = stateRes.ok
+					? ((await stateRes.json()) as LobbyStateResponse)
+					: null;
 
 				for (const entry of entries) {
 					this.cursor = entry.cursor;
@@ -199,19 +223,21 @@ export class DevvitTransport implements ITransport {
 					}
 				}
 
-				const currentPeerIds = new Set(state.players.map((p) => p.peerId));
+				if (state) {
+					const currentPeerIds = new Set(state.players.map((p) => p.peerId));
 
-				for (const peerId of currentPeerIds) {
-					if (!this.knownPeerIds.has(peerId)) {
-						this.knownPeerIds.add(peerId);
-						this.peerJoinHandlers.forEach((handler) => handler(peerId));
+					for (const peerId of currentPeerIds) {
+						if (!this.knownPeerIds.has(peerId)) {
+							this.knownPeerIds.add(peerId);
+							this.peerJoinHandlers.forEach((handler) => handler(peerId));
+						}
 					}
-				}
 
-				for (const peerId of this.knownPeerIds) {
-					if (!currentPeerIds.has(peerId)) {
-						this.knownPeerIds.delete(peerId);
-						this.peerLeaveHandlers.forEach((handler) => handler(peerId));
+					for (const peerId of this.knownPeerIds) {
+						if (!currentPeerIds.has(peerId)) {
+							this.knownPeerIds.delete(peerId);
+							this.peerLeaveHandlers.forEach((handler) => handler(peerId));
+						}
 					}
 				}
 
@@ -223,6 +249,8 @@ export class DevvitTransport implements ITransport {
 				if (!this.disconnected) {
 					console.warn('[DevvitTransport] poll failed:', error);
 				}
+			} finally {
+				this.pollInFlight = false;
 			}
 		};
 

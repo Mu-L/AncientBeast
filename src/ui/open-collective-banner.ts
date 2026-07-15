@@ -14,9 +14,45 @@ type OpenCollectiveBannerConfig = {
 	onCloseView: () => void;
 	isViewOpen: () => boolean;
 	enabled?: boolean;
+	/**
+	 * Hide the widget entirely. Used in embedding contexts that block
+	 * third-party requests via CSP — the contributor feed, avatars AND the
+	 * "Become a Sponsor" link are all blocked there, so the widget is hidden
+	 * rather than shown. See isThirdPartyContentBlocked().
+	 */
+	hidden?: boolean;
 };
 
 const OPEN_COLLECTIVE_WIDGET_ENABLED = true;
+
+/**
+ * Some embedding contexts block third-party requests (contributor feed, avatars)
+ * via Content-Security-Policy. Reddit's Devvit webview is the primary one, but
+ * many online arcades that forbid advertising/third-party content do the same.
+ * In those cases the OpenCollective widget is hidden entirely (the contributor
+ * feed, avatars AND the "Become a Sponsor" link are all blocked there), so no
+ * blocked requests (and therefore no console errors) occur.
+ *
+ * Detection:
+ *  - `net=devvit` on the URL (Reddit's webview)
+ *  - `restricted=1`/`restricted=true` on the URL (generic opt-in for other
+ *    embedders — just append it to the game's embed/iframe URL)
+ */
+export function isThirdPartyContentBlocked(): boolean {
+	if (typeof window === 'undefined') {
+		return false;
+	}
+
+	const url = new URLSearchParams(window.location.search);
+	if (url.get('net') === 'devvit') {
+		return true;
+	}
+	if (url.get('restricted') === '1' || url.get('restricted') === 'true') {
+		return true;
+	}
+
+	return false;
+}
 const OPEN_COLLECTIVE_CACHE_KEY = 'ab-opencollective-members-v1';
 const OPEN_COLLECTIVE_CACHE_TIME_KEY = 'ab-opencollective-members-ts-v1';
 const OPEN_COLLECTIVE_REFRESH_TTL_MS = 12 * 60 * 60 * 1000;
@@ -35,6 +71,7 @@ export class OpenCollectiveBanner {
 	onCloseView: () => void;
 	isViewOpen: () => boolean;
 	enabled: boolean;
+	hidden: boolean;
 	initialized: boolean;
 	isFetching: boolean;
 	allMembers: OpenCollectiveMember[];
@@ -49,6 +86,7 @@ export class OpenCollectiveBanner {
 		this.onCloseView = config.onCloseView;
 		this.isViewOpen = config.isViewOpen;
 		this.enabled = config.enabled ?? OPEN_COLLECTIVE_WIDGET_ENABLED;
+		this.hidden = config.hidden ?? false;
 		this.initialized = false;
 		this.isFetching = false;
 		this.allMembers = [];
@@ -75,6 +113,15 @@ export class OpenCollectiveBanner {
 		}
 
 		this.bindInteractions();
+
+		// Restricted embedding contexts block all third-party content (contributor
+		// feed, avatars, and even the "Become a Sponsor" link which can't open),
+		// so hide the widget entirely rather than rendering a non-functional CTA.
+		if (this.hidden) {
+			this.$banner.hide();
+			return;
+		}
+
 		this.allMembers = this.getCachedMembers();
 		this.renderContributors();
 
@@ -85,6 +132,10 @@ export class OpenCollectiveBanner {
 
 	onViewOpen() {
 		if (!this.enabled || !this.initialized) {
+			return;
+		}
+
+		if (this.hidden) {
 			return;
 		}
 
@@ -275,6 +326,10 @@ export class OpenCollectiveBanner {
 	}
 
 	fetchMembers() {
+		if (this.hidden) {
+			return;
+		}
+
 		if (this.isFetching) {
 			return;
 		}

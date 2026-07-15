@@ -103,6 +103,7 @@ describe('DevvitLobbyProvider', () => {
 			onPeerLeave: jest.fn(),
 			onConnected: jest.fn(),
 			getMyId: jest.fn(() => 'player-1'),
+			isHostPeer: jest.fn(() => false),
 		} as unknown as jest.Mocked<DevvitTransport>;
 
 		provider = new DevvitLobbyProvider(mockTransport);
@@ -206,5 +207,46 @@ describe('DevvitLobbyProvider', () => {
 
 		expect(provider.getLobbyState().status).toBe('playing');
 		expect(handler).toHaveBeenCalledWith(matchStartMessage);
+	});
+
+	test('drops self-originated action messages (no local duplicate)', () => {
+		const handler = jest.fn();
+		provider.onGameMessage(handler);
+
+		const abilityMessage: GameMessage = {
+			type: 'action-ability',
+			id: 3,
+			target: { type: 'hex', x: 5, y: 5 },
+			args: [],
+			playerId: 'player-1',
+			creatureId: 1,
+		};
+
+		// Echoed back from the server, originated by this same client.
+		(
+			provider as unknown as { handleTransportMessage: (m: GameMessage, p: string) => void }
+		).handleTransportMessage(abilityMessage, 'player-1');
+
+		expect(handler).not.toHaveBeenCalled();
+	});
+
+	test('applies action messages from other players', () => {
+		const handler = jest.fn();
+		provider.onGameMessage(handler);
+
+		const abilityMessage: GameMessage = {
+			type: 'action-ability',
+			id: 3,
+			target: { type: 'hex', x: 5, y: 5 },
+			args: [],
+			playerId: 'player-2',
+			creatureId: 2,
+		};
+
+		(
+			provider as unknown as { handleTransportMessage: (m: GameMessage, p: string) => void }
+		).handleTransportMessage(abilityMessage, 'player-2');
+
+		expect(handler).toHaveBeenCalledWith(abilityMessage);
 	});
 });

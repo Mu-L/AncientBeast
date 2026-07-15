@@ -3687,10 +3687,35 @@ input {
 	100% { transform: rotate(0deg); }
 }
 
-/* Show orientation message only on mobile devices in portrait mode */
-@media screen and (max-width: 823px) and (orientation: portrait) {
+/* Show orientation message only on actual touch devices in portrait mode.
+   `pointer: coarse` excludes desktop browsers that merely happen to be rendered in a
+   narrow/tall iframe or modal (e.g. a Devvit expanded webview) — those can't be rotated,
+   so the prompt would be misleading there. */
+@media screen and (max-width: 823px) and (orientation: portrait) and (pointer: coarse) {
 	#orientation-message {
 		display: flex;
+	}
+}
+
+/* Inside Reddit's webview, fullscreen/orientation-lock APIs are unreliable (rotating the
+   phone doesn't resize the embedded frame, and our fullscreen button can't escape it either),
+   so the rotate prompt would just permanently block play with no way out. Disable it entirely
+   for Devvit — see the `.devvit-mode` class added in script.ts. */
+body.devvit-mode #orientation-message {
+	display: none !important;
+}
+
+/* Fullscreen API is unreliable inside Reddit's webview (the embedding iframe
+   doesn't grant the Fullscreen permission), so the fullscreen button can't
+   actually do anything there. Disable it and style it like other disabled
+   buttons (e.g. #delay.disabled) so it reads as unavailable — see the matching
+   no-op guard in ui/fullscreen.ts. */
+body.devvit-mode .button#fullscreen {
+	opacity: 0.35;
+	cursor: not-allowed !important;
+
+	&:hover {
+		opacity: 0.35;
 	}
 }
 

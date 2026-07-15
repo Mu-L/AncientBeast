@@ -59,6 +59,11 @@ unitData.forEach(async (creature) => {
 });
 
 $j(() => {
+	// Was an inline `oncontextmenu="return false;"` attribute on <body> — Devvit's CSP
+	// (script-src-attr) blocks inline event handler attributes entirely, so this has to be
+	// wired up from the bundled script instead.
+	document.body.addEventListener('contextmenu', (event) => event.preventDefault());
+
 	const scrim = $j('.scrim');
 	scrim.on('transitionend', function () {
 		scrim.remove();
@@ -74,6 +79,11 @@ $j(() => {
 	const devvitPlayerId = new URLSearchParams(window.location.search).get('playerId') || 'anon';
 
 	if (netMode === 'devvit') {
+		// The "please rotate your device" prompt can't reliably be escaped inside Reddit's
+		// webview (fullscreen/orientation APIs are unreliable there), so just disable it
+		// entirely for Devvit — see #orientation-message.devvit-mode override in styles.less.
+		$j('body').addClass('devvit-mode');
+
 		if (lobbyCodeFromUrl && lobbyCodeFromUrl !== 'menu') {
 			const parsedJoinCode = parseLobbyCodeInput(lobbyCodeFromUrl);
 			if (parsedJoinCode) {
@@ -103,9 +113,7 @@ $j(() => {
 					});
 			}
 		} else {
-			$j('body').addClass('devvit-mode');
-			$j('#devvit-queue').addClass('queue-screen');
-			startDevvitQueue(devvitPlayerId);
+			setupDevvitQueueUi(devvitPlayerId);
 		}
 	} else if (joinCodeFromUrl) {
 		const parsedJoinCode = parseLobbyCodeInput(joinCodeFromUrl);
@@ -166,6 +174,14 @@ $j(() => {
 	// Add listener for Fullscreen API
 	const fullscreen = new Fullscreen(document.getElementById('fullscreen'));
 	$j('#fullscreen').on('click', () => fullscreen.toggle());
+
+	// The Fullscreen API requires the embedding page/iframe chain to explicitly allow it
+	// (Permissions-Policy: fullscreen). Inside Reddit's webview we don't control that, so
+	// `requestFullscreen()` silently fails there — hide the button instead of leaving a
+	// control that looks clickable but does nothing.
+	if (!document.fullscreenEnabled) {
+		$j('#fullscreen').hide();
+	}
 
 	const isTyping = (event) => {
 		const target = event.target as HTMLElement;
@@ -465,6 +481,12 @@ $j(() => {
 		if (!$j('#pre-match').is(':visible')) {
 			return;
 		}
+		// Skip when the peer-to-peer lobby row is hidden (e.g. Devvit mode, which uses its
+		// own queue UI instead) — reading the clipboard here just triggers an unnecessary
+		// browser "Paste" permission prompt for a field the player can't even see.
+		if (!$j('#createdLobby').is(':visible')) {
+			return;
+		}
 
 		try {
 			const clipboardText = await navigator.clipboard.readText();
@@ -497,7 +519,10 @@ $j(() => {
 			updateLobbyUi(lobby);
 			const $createButton = $j('#createLobbyButton');
 			$createButton.val('Starting match');
-			window.setTimeout(() => G.startMultiplayerMatch(), 800);
+			window.setTimeout(
+				() => G.startMultiplayerMatch(getGameConfig() as unknown as import('./multiplayer').GameConfig),
+				800,
+			);
 			return;
 		}
 		previousPlayerCount = playerCount;
@@ -733,17 +758,88 @@ $j(() => {
 
 		return false;
 	});
-
-	$j('#devvitCancelQueue').on('click', async () => {
-		window.location.href = '/index.html';
-	});
 });
 
-async function startDevvitQueue(playerId: string) {
-	const maxPolls = 60;
+const DEVVIT_QUEUE_COUNTDOWN_SECONDS = 30;
+let devvitQueueActive = false;
+let devvitQueueCancelled = false;
+let devvitQueueCountdownTimer: number | undefined;
+
+function setupDevvitQueueUi(playerId: string) {
+	refreshDevvitMatchesCounter();
+	window.setInterval(refreshDevvitMatchesCounter, 8000);
+
+	$j('#devvitQueueButton').on('click', () => {
+		if (devvitQueueActive) {
+			leaveDevvitQueue(playerId);
+		} else {
+			joinDevvitQueue(playerId);
+		}
+	});
+}
+
+async function refreshDevvitMatchesCounter() {
+	try {
+		const res = await fetch('/api/queue/stats');
+		if (!res.ok) {
+			return;
+		}
+
+		const data = (await res.json()) as { queued: number; ongoingMatches: number };
+		const parts: string[] = [];
+		if (data.ongoingMatches > 0) {
+			parts.push(`${data.ongoingMatches} match${data.ongoingMatches === 1 ? '' : 'es'} ongoing`);
+		}
+		if (data.queued > 0) {
+			parts.push(`${data.queued} in queue`);
+		}
+		$j('#devvitMatchesCounter').text(parts.join(' · '));
+	} catch (_error) {
+		// Non-critical; leave the counter as-is on failure.
+	}
+}
+
+function joinDevvitQueue(playerId: string) {
+	devvitQueueActive = true;
+	devvitQueueCancelled = false;
+	$j('#devvitQueueButton').val('Joining...').prop('disabled', true);
+	$j('#devvitQueueStatus').text('');
+	startDevvitQueue(playerId);
+}
+
+async function leaveDevvitQueue(playerId: string, message = '') {
+	devvitQueueActive = false;
+	devvitQueueCancelled = true;
+
+	if (devvitQueueCountdownTimer !== undefined) {
+		window.clearInterval(devvitQueueCountdownTimer);
+		devvitQueueCountdownTimer = undefined;
+	}
+
+	$j('#devvitQueueButton').val('Join Queue').prop('disabled', false);
+	$j('#devvitQueueStatus').text(message);
 
 	try {
-		const joinRes = await fetch('/internal/queue/join', {
+		await fetch('/api/queue/leave', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ playerId }),
+		});
+	} catch (_error) {
+		// Best-effort; queue entries also expire server-side on their own.
+	}
+
+	refreshDevvitMatchesCounter();
+}
+
+async function startDevvitQueue(playerId: string) {
+	let remaining = DEVVIT_QUEUE_COUNTDOWN_SECONDS;
+	const updateCountdown = () => {
+		$j('#devvitQueueStatus').text(`Searching for opponent... ${remaining}s`);
+	};
+
+	try {
+		const joinRes = await fetch('/api/queue/join', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ playerId }),
@@ -760,8 +856,27 @@ async function startDevvitQueue(playerId: string) {
 			return;
 		}
 
-		for (let i = 0; i < maxPolls; i++) {
+		if (devvitQueueCancelled) {
+			return;
+		}
+
+		// The initial join didn't find an immediate match — now it's safe to let the
+		// player cancel while we keep polling in the background.
+		$j('#devvitQueueButton').val('Leave Queue').prop('disabled', false);
+		updateCountdown();
+		devvitQueueCountdownTimer = window.setInterval(() => {
+			remaining = Math.max(0, remaining - 1);
+			updateCountdown();
+		}, 1000);
+
+		// Poll a little past the visible countdown so a match resolved right at the
+		// boundary (e.g. the bot-fallback timeout) still gets picked up.
+		const maxPolls = DEVVIT_QUEUE_COUNTDOWN_SECONDS + 5;
+		for (let i = 0; i < maxPolls && !devvitQueueCancelled; i++) {
 			await new Promise((resolve) => setTimeout(resolve, 1000));
+			if (devvitQueueCancelled) {
+				return;
+			}
 
 			const statusRes = await fetch(`/api/queue/status?playerId=${encodeURIComponent(playerId)}`);
 			if (!statusRes.ok) {
@@ -775,10 +890,14 @@ async function startDevvitQueue(playerId: string) {
 			}
 		}
 
-		$j('#devvit-queue .queue-status').text('No opponent found, try again!');
+		if (!devvitQueueCancelled) {
+			await leaveDevvitQueue(playerId, 'No opponent found, try again!');
+		}
 	} catch (error) {
 		console.error('Queue error:', error);
-		$j('#devvit-queue .queue-status').text('Matchmaking error, try again!');
+		if (!devvitQueueCancelled) {
+			await leaveDevvitQueue(playerId, 'Matchmaking error, try again!');
+		}
 	}
 }
 

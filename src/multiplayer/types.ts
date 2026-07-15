@@ -135,3 +135,17 @@ export function isActionMessage(message: GameMessage): boolean {
 		message.type === 'action-ability'
 	);
 }
+
+/**
+ * Action messages that the originating client already applies locally before
+ * sending (e.g. Ability.animation -> animation2 -> activate -> summon for
+ * materialize). In relay-based backends (Devvit) the server echoes every message
+ * back to its sender, so the receiver must skip these self-originated echoes to
+ * avoid applying the same effect twice (stacked units, duplicate moves, etc.).
+ * Peer mode sidesteps this with sendExcept(sender). `turn-update` is deliberately
+ * excluded: it only re-activates a creature and is idempotent, so letting the
+ * self-echo through is harmless and avoids any turn-sync edge cases.
+ */
+export function isSelfAppliedActionMessage(message: GameMessage): boolean {
+	return isActionMessage(message);
+}
