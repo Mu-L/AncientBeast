@@ -18,6 +18,7 @@ import {
 	DEBUG_GAME_LOG,
 	DEBUG_HAS_GAME_LOG,
 } from './debug';
+import { getClientVersionLabel } from './utility/clientVersion';
 
 if (DEBUG && 'serviceWorker' in navigator) {
 	navigator.serviceWorker
@@ -63,6 +64,8 @@ $j(() => {
 	// (script-src-attr) blocks inline event handler attributes entirely, so this has to be
 	// wired up from the bundled script instead.
 	document.body.addEventListener('contextmenu', (event) => event.preventDefault());
+
+	renderBuildBadge();
 
 	const scrim = $j('.scrim');
 	scrim.on('transitionend', function () {
@@ -792,6 +795,23 @@ function stopDevvitQueueCountdown() {
 	if (devvitQueueCountdownTimer !== undefined) {
 		window.clearInterval(devvitQueueCountdownTimer);
 		devvitQueueCountdownTimer = undefined;
+	}
+}
+
+/**
+ * Render a small always-visible build-version badge in the corner. Lets testers
+ * tell an old deployed Devvit build from a new one at a glance (Devvit keeps
+ * several experience versions live after upload, so "looks broken" can just
+ * mean "you're on 0.0.51, not the fix").
+ */
+function renderBuildBadge(): void {
+	const existing = document.getElementById('buildBadge');
+	const badge = existing ?? document.createElement('div');
+	badge.id = 'buildBadge';
+	badge.className = 'build-badge';
+	badge.textContent = getClientVersionLabel();
+	if (!existing) {
+		document.body.appendChild(badge);
 	}
 }
 

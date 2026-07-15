@@ -3719,6 +3719,25 @@ body.devvit-mode .button#fullscreen {
 	}
 }
 
+/* Always-visible build-version badge (see renderBuildBadge in script.ts). Tells
+   testers which deployed build they're on; collapsed into a corner and kept
+   unobtrusive so it never covers gameplay. */
+.build-badge {
+	position: fixed;
+	right: 6px;
+	bottom: 4px;
+	z-index: 9999;
+	padding: 2px 6px;
+	border-radius: 4px;
+	background: rgba(0, 0, 0, 0.55);
+	color: #9ad;
+	font: 11px/1.2 monospace;
+	letter-spacing: 0.3px;
+	pointer-events: none;
+	user-select: none;
+	opacity: 0.7;
+}
+
 @media (max-width: 600px) {
 	#chat {
 		bottom: 0;
