@@ -6,6 +6,7 @@ import {
 	handleQueueJoin,
 	handleQueueLeave,
 	handleQueueStatus,
+	pruneActiveMatches,
 } from '../queue';
 
 // Mounted at /api/queue
@@ -50,6 +51,8 @@ apiQueue.get('/status', async (c) => {
 });
 
 apiQueue.get('/stats', async (c) => {
+	await pruneActiveMatches(redis);
+
 	const [queued, ongoingMatches] = await Promise.all([
 		redis.zCard(QUEUE_KEY),
 		redis.zCard(ACTIVE_MATCHES_KEY),

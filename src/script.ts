@@ -764,18 +764,55 @@ const DEVVIT_QUEUE_COUNTDOWN_SECONDS = 30;
 let devvitQueueActive = false;
 let devvitQueueCancelled = false;
 let devvitQueueCountdownTimer: number | undefined;
+let devvitQueueRunId = 0;
+let devvitQueueMatchPendingNavigation = false;
+
+type DevvitQueueButtonState = 'join' | 'joining' | 'leave' | 'matched';
+
+function setDevvitQueueButtonState(state: DevvitQueueButtonState) {
+	const $button = $j('#devvitQueueButton');
+
+	switch (state) {
+		case 'join':
+			$button.val('Join Queue').prop('disabled', false);
+			break;
+		case 'joining':
+			$button.val('Joining...').prop('disabled', true);
+			break;
+		case 'leave':
+			$button.val('Leave Queue').prop('disabled', false);
+			break;
+		case 'matched':
+			$button.val('Match Found').prop('disabled', true);
+			break;
+	}
+}
+
+function stopDevvitQueueCountdown() {
+	if (devvitQueueCountdownTimer !== undefined) {
+		window.clearInterval(devvitQueueCountdownTimer);
+		devvitQueueCountdownTimer = undefined;
+	}
+}
 
 function setupDevvitQueueUi(playerId: string) {
 	refreshDevvitMatchesCounter();
 	window.setInterval(refreshDevvitMatchesCounter, 8000);
 
-	$j('#devvitQueueButton').on('click', () => {
+	$j('#devvitQueueButton').off('click').on('click', () => {
 		if (devvitQueueActive) {
 			leaveDevvitQueue(playerId);
 		} else {
 			joinDevvitQueue(playerId);
 		}
 	});
+
+	if (devvitQueueMatchPendingNavigation) {
+		setDevvitQueueButtonState('matched');
+		return;
+	}
+
+	setDevvitQueueButtonState('join');
 }
 
 async function refreshDevvitMatchesCounter() {
@@ -800,23 +837,27 @@ async function refreshDevvitMatchesCounter() {
 }
 
 function joinDevvitQueue(playerId: string) {
+	devvitQueueRunId += 1;
 	devvitQueueActive = true;
 	devvitQueueCancelled = false;
-	$j('#devvitQueueButton').val('Joining...').prop('disabled', true);
+	devvitQueueMatchPendingNavigation = false;
+	setDevvitQueueButtonState('joining');
 	$j('#devvitQueueStatus').text('');
-	startDevvitQueue(playerId);
+	void startDevvitQueue(playerId, devvitQueueRunId);
 }
 
-async function leaveDevvitQueue(playerId: string, message = '') {
-	devvitQueueActive = false;
-	devvitQueueCancelled = true;
-
-	if (devvitQueueCountdownTimer !== undefined) {
-		window.clearInterval(devvitQueueCountdownTimer);
-		devvitQueueCountdownTimer = undefined;
+async function leaveDevvitQueue(playerId: string, message = '', runId?: number) {
+	if (runId != null && runId !== devvitQueueRunId) {
+		return;
 	}
 
-	$j('#devvitQueueButton').val('Join Queue').prop('disabled', false);
+	devvitQueueActive = false;
+	devvitQueueCancelled = true;
+	devvitQueueMatchPendingNavigation = false;
+
+	stopDevvitQueueCountdown();
+
+	setDevvitQueueButtonState('join');
 	$j('#devvitQueueStatus').text(message);
 
 	try {
@@ -832,7 +873,7 @@ async function leaveDevvitQueue(playerId: string, message = '') {
 	refreshDevvitMatchesCounter();
 }
 
-async function startDevvitQueue(playerId: string) {
+async function startDevvitQueue(playerId: string, runId: number) {
 	let remaining = DEVVIT_QUEUE_COUNTDOWN_SECONDS;
 	const updateCountdown = () => {
 		$j('#devvitQueueStatus').text(`Searching for opponent... ${remaining}s`);
@@ -851,7 +892,16 @@ async function startDevvitQueue(playerId: string) {
 
 		const joinData = (await joinRes.json()) as { status: string; lobbyCode?: string };
 
+		if (runId !== devvitQueueRunId) {
+			return;
+		}
+
 		if (joinData.status === 'matched' && joinData.lobbyCode) {
+			devvitQueueActive = false;
+			devvitQueueCancelled = true;
+			devvitQueueMatchPendingNavigation = true;
+			stopDevvitQueueCountdown();
+			setDevvitQueueButtonState('matched');
 			navigateToLobby(joinData.lobbyCode);
 			return;
 		}
@@ -862,7 +912,7 @@ async function startDevvitQueue(playerId: string) {
 
 		// The initial join didn't find an immediate match — now it's safe to let the
 		// player cancel while we keep polling in the background.
-		$j('#devvitQueueButton').val('Leave Queue').prop('disabled', false);
+		setDevvitQueueButtonState('leave');
 		updateCountdown();
 		devvitQueueCountdownTimer = window.setInterval(() => {
 			remaining = Math.max(0, remaining - 1);
@@ -874,6 +924,10 @@ async function startDevvitQueue(playerId: string) {
 		const maxPolls = DEVVIT_QUEUE_COUNTDOWN_SECONDS + 5;
 		for (let i = 0; i < maxPolls && !devvitQueueCancelled; i++) {
 			await new Promise((resolve) => setTimeout(resolve, 1000));
+			if (runId !== devvitQueueRunId) {
+				return;
+			}
+
 			if (devvitQueueCancelled) {
 				return;
 			}
@@ -885,18 +939,23 @@ async function startDevvitQueue(playerId: string) {
 
 			const statusData = (await statusRes.json()) as { status: string; lobbyCode?: string };
 			if (statusData.status === 'matched' && statusData.lobbyCode) {
+				devvitQueueActive = false;
+				devvitQueueCancelled = true;
+				devvitQueueMatchPendingNavigation = true;
+				stopDevvitQueueCountdown();
+				setDevvitQueueButtonState('matched');
 				navigateToLobby(statusData.lobbyCode);
 				return;
 			}
 		}
 
 		if (!devvitQueueCancelled) {
-			await leaveDevvitQueue(playerId, 'No opponent found, try again!');
+			await leaveDevvitQueue(playerId, 'No opponent found, try again!', runId);
 		}
 	} catch (error) {
 		console.error('Queue error:', error);
 		if (!devvitQueueCancelled) {
-			await leaveDevvitQueue(playerId, 'Matchmaking error, try again!');
+			await leaveDevvitQueue(playerId, 'Matchmaking error, try again!', runId);
 		}
 	}
 }

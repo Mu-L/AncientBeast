@@ -95592,7 +95592,7 @@ var settings = new SettingsClient();
 var QUEUE_KEY = "ab:queue";
 var ACTIVE_MATCHES_KEY = "ab:activeMatches";
 var RECENT_TTL_SECONDS = 86400;
-var RECENT_RETRY_MS = 15e3;
+var RECENT_RETRY_MS = 3e3;
 var MATCHED_TTL_SECONDS = 300;
 var QUEUE_TIMEOUT_MS = 3e4;
 function matchedKey(playerId) {
@@ -95723,6 +95723,39 @@ async function handleQueueLeave(redis2, playerId) {
   await redis2.zRem(QUEUE_KEY, [playerId]);
   await redis2.del(matchedKey(playerId));
   return { status: "left" };
+}
+async function pruneActiveMatches(redis2) {
+  const entries = await redis2.zRange(ACTIVE_MATCHES_KEY, 0, -1, { by: "rank" });
+  if (!entries || entries.length === 0) {
+    return;
+  }
+  const toRemove = [];
+  for (const entry of entries) {
+    const code = entry.member;
+    const metaRaw = await redis2.get(`ab:lobby:${code}:meta`);
+    if (!metaRaw) {
+      toRemove.push(code);
+      continue;
+    }
+    let meta;
+    try {
+      meta = JSON.parse(metaRaw);
+    } catch (_error) {
+      toRemove.push(code);
+      continue;
+    }
+    if (!meta || meta.status === "ended") {
+      toRemove.push(code);
+      continue;
+    }
+    const hasPlayers = await redis2.exists(`ab:lobby:${code}:players`) > 0;
+    if (!hasPlayers) {
+      toRemove.push(code);
+    }
+  }
+  if (toRemove.length > 0) {
+    await redis2.zRem(ACTIVE_MATCHES_KEY, toRemove);
+  }
 }
 
 // src/devvit/lobby.ts
@@ -96087,6 +96120,7 @@ apiQueue.get("/status", async (c) => {
   return c.json(result);
 });
 apiQueue.get("/stats", async (c) => {
+  await pruneActiveMatches(redis);
   const [queued, ongoingMatches] = await Promise.all([
     redis.zCard(QUEUE_KEY),
     redis.zCard(ACTIVE_MATCHES_KEY)
