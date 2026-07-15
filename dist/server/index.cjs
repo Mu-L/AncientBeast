@@ -95758,6 +95758,62 @@ async function pruneActiveMatches(redis2) {
   }
 }
 
+// src/multiplayer/authoritative.ts
+var InMemoryIntentStore = class {
+  constructor() {
+    this.logs = /* @__PURE__ */ new Map();
+  }
+  async append(code, intent) {
+    const log = this.logs.get(code) ?? [];
+    log.push(intent);
+    this.logs.set(code, log);
+    return log.length;
+  }
+  async getLog(code) {
+    return [...this.logs.get(code) ?? []];
+  }
+  async getSequence(code) {
+    return (this.logs.get(code) ?? []).length;
+  }
+  async has(code) {
+    return this.logs.has(code);
+  }
+  async reset(code) {
+    this.logs.delete(code);
+  }
+};
+
+// src/multiplayer/authoritativeProcessor.ts
+var AuthoritativeProcessor = class {
+  constructor(options = {}) {
+    this.store = options.store ?? new InMemoryIntentStore();
+  }
+  /**
+   * Append an intent to the log and return its sequence number (1-based).
+   * Server bundles call this without touching the engine.
+   */
+  async step(code, intent) {
+    const sequence = await this.store.append(code, intent);
+    return { sequence };
+  }
+  async has(code) {
+    return this.store.has(code);
+  }
+  async getLog(code) {
+    return this.store.getLog(code);
+  }
+  async getSequence(code) {
+    return this.store.getSequence(code);
+  }
+  async reset(code) {
+    await this.store.reset(code);
+  }
+};
+
+// src/devvit/authoritativeRuntime.ts
+var intentStore = new InMemoryIntentStore();
+var authoritativeProcessor = new AuthoritativeProcessor({ store: intentStore });
+
 // src/devvit/lobby.ts
 var import_node_crypto = require("node:crypto");
 var LOBBY_PREFIX = "ab:lobby";
@@ -95985,6 +96041,20 @@ lobby.post("/:code/message", async (c) => {
   const cursor = await appendMessage(code, from, body.message);
   await markPlayerSeen(code, from);
   await refreshTtl(code);
+  if (body.message && body.message.type === "intent") {
+    try {
+      const { sequence } = await authoritativeProcessor.step(
+        code,
+        body.message.intent
+      );
+      await appendMessage(code, meta.hostPeerId || "server", {
+        type: "intent-ack",
+        sequence
+      });
+    } catch (error) {
+      console.warn("[lobby] authoritative intent failed:", error);
+    }
+  }
   return c.json({ cursor });
 });
 lobby.post("/:code/start", async (c) => {
