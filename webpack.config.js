@@ -67,14 +67,27 @@ export const locationPaths=${locationPaths}
 module.exports = (env, argv) => {
 	const production = (argv && argv.mode === 'production') || process.env.NODE_ENV === 'production';
 	const enableServiceWorker = process.env.ENABLE_SERVICE_WORKER === 'true' ? true : false;
+	// NOTE: The live AncientBeast.com site's CI (.github/workflows/config.yaml) uploads the
+	// literal `deploy/` folder, so the default build must keep outputting there unchanged.
+	// Passing `--env target=devvit` (used by the Devvit-specific npm scripts) outputs to
+	// `dist/client` instead, and adds the extra `gameEntry` entrypoint Devvit Web needs.
+	// NOTE: The game is embedded directly (no splash + "expanded mode" step) because Devvit's
+	// expanded webview mode ignores our `height` config and forces its own fixed modal size
+	// (tall/narrow) regardless of device — unusable for this landscape-only game.
+	const isDevvitTarget = Boolean(env && env.target === 'devvit');
 
 	return {
 		entry: {
 			vendor: ['pixi', 'p2', 'phaser'],
 			app: ['babel-polyfill', path.resolve(__dirname, 'src', 'script.ts')],
+			...(isDevvitTarget && {
+				gameEntry: path.resolve(__dirname, 'src', 'devvit', 'game-entry.ts'),
+			}),
 		},
 		output: {
-			path: path.resolve(__dirname, 'deploy'),
+			path: isDevvitTarget
+				? path.resolve(__dirname, 'dist', 'client')
+				: path.resolve(__dirname, 'deploy'),
 			filename: '[name].[contenthash].bundle.js',
 			clean: true, // NOTE: Clean the output folder before each build.
 			assetModuleFilename: () => {
@@ -90,7 +103,9 @@ module.exports = (env, argv) => {
 				{ test: /\.js$/, use: ['babel-loader'], exclude: /node_modules/ },
 				{
 					test: /\.ts$/,
-					use: 'ts-loader',
+					use: isDevvitTarget
+						? { loader: 'ts-loader', options: { configFile: 'tsconfig.devvit-client.json' } }
+						: 'ts-loader',
 					exclude: /node_modules/,
 				},
 				{
@@ -195,9 +210,21 @@ module.exports = (env, argv) => {
 			new HtmlWebpackPlugin({
 				template: path.resolve(__dirname, 'src', 'index.ejs'),
 				favicon: path.resolve(__dirname, 'assets', 'favicon.png'),
+				chunks: ['vendor', 'app'],
 				production,
 				enableServiceWorker,
+				devvitTarget: isDevvitTarget,
 			}),
+			...(isDevvitTarget
+				? [
+						new HtmlWebpackPlugin({
+							template: path.resolve(__dirname, 'src', 'devvit', 'game-entry.html'),
+							filename: 'game.html',
+							chunks: ['gameEntry'],
+							inject: 'body',
+						}),
+				  ]
+				: []),
 			new Dotenv({
 				defaults: './.env.example',
 				silent: true,

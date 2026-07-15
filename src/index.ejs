@@ -9,7 +9,9 @@
 		<meta name="monetization" content="$pay.stronghold.co/1a15c4d9d46cdd64f9e9094a7c4f04240dc">
 		<meta name="theme-color" content="black">
 		<link rel="manifest" href="manifest.json">
+		<% if (!htmlWebpackPlugin.options.devvitTarget) { %>
 		<link rel="stylesheet" href="https://icono-49d6.kxcdn.com/icono.min.css">
+		<% } %>
 		<title>Ancient Beast <%= require('./utility/version').pretty %></title>
 		<style>
 			.scrim.loading {
@@ -28,7 +30,7 @@
 			}
 		</style>
 	</head>
-	<body oncontextmenu="return false;" id="AncientBeast">
+	<body id="AncientBeast">
 		<div class="scrim loading"></div>
 		<div id="matchMaking">
 			<div id="loader" class="hide">
