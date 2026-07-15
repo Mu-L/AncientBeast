@@ -23,6 +23,7 @@ import type {
 	LobbySession,
 	LobbyState,
 } from './multiplayer';
+import type { AuthoritativeState, Intent } from './multiplayer/authoritative';
 import { getVisibilityAwareDelay, sleep } from './utility/time';
 import { DEBUG_DISABLE_GAME_STATUS_CONSOLE_LOG, DEBUG_DISABLE_MUSIC } from './debug';
 import { Point, configure as configurePointFacade } from './utility/pointfacade';
@@ -125,6 +126,14 @@ export default class Game {
 	configData: Partial<GameConfig>;
 	match: object;
 	multiplayer: boolean;
+	/**
+	 * Server-authoritative mode toggle. When true, the client sends `Intent`s
+	 * (inputs) to the authoritative processor and applies them via `applyIntent`
+	 * when received (no optimistic local application). This eliminates the
+	 * relay desync bugs (e.g., Fiery Touch/Claw not syncing). Kept ON by
+	 * default; the relay code path remains in the tree as a fallback if needed.
+	 */
+	authoritative: boolean;
 	lobby: LobbyClient | null;
 	lobbyCode: string;
 	lobbyState: LobbyState | null;
@@ -323,6 +332,7 @@ export default class Game {
 		this.configData = {};
 		this.match = {};
 		this.multiplayer = false;
+		this.authoritative = true;
 		this.lobby = null;
 		this.lobbyCode = '';
 		this.lobbyState = null;
@@ -517,33 +527,50 @@ export default class Game {
 		this.musicPlayer = this.soundsys.musicPlayer;
 
 		this.whenPhaserBooted(this.Phaser, (phaser) => {
-			phaser.load.onFileComplete.add(this.loadFinish, this);
-			phaser.load.onLoadComplete.add(this.finishLoading, this);
-			phaser.load.onLoadComplete.add(onLoadCompleteFn, this);
-
-			const assetsRaw = assetsUse(phaser);
-			const assets = Array.isArray(assetsRaw) ? assetsRaw : [];
-
-			console.log('[DEBUG] Safe assets list:', assets);
-
-			assets.forEach((_asset) => {
-				// safely process each asset here
-			});
-
-			// Background
-			const backgroundImage =
-				this.background_image ||
-				this.configData.background_image ||
-				this.configData.combatLocation ||
-				locationPaths[0];
-			phaser.load.image('background', getUrl('locations/' + backgroundImage));
-
-			// Branding
-			phaser.load.image('AncientBeastLogo', getUrl('interface/AncientBeast'));
-
-			// Load artwork, shout and avatar for each unit
-			this.loadUnitData(unitData);
+			// Belt-and-suspenders: Phaser sets `isBooted` slightly before the Loader
+			// (`load`) is created during boot, so a stale/cached build can call this
+			// with `phaser.load` still null and throw "can't access property
+			// 'onFileComplete', this.Phaser.load is null". Re-wait rather than crash.
+			if (!phaser.load) {
+				this.whenPhaserBooted(phaser, () => this.startAssetLoad(phaser, onLoadCompleteFn));
+				return;
+			}
+			this.startAssetLoad(phaser, onLoadCompleteFn);
 		});
+	}
+
+	/** Wire up loader completion hooks and queue the game's asset downloads. */
+	private startAssetLoad(phaser: Phaser.Game, onLoadCompleteFn: () => void): void {
+		if (!phaser.load) {
+			return;
+		}
+
+		phaser.load.onFileComplete.add(this.loadFinish, this);
+		phaser.load.onLoadComplete.add(this.finishLoading, this);
+		phaser.load.onLoadComplete.add(onLoadCompleteFn, this);
+
+		const assetsRaw = assetsUse(phaser);
+		const assets = Array.isArray(assetsRaw) ? assetsRaw : [];
+
+		console.log('[DEBUG] Safe assets list:', assets);
+
+		assets.forEach((_asset) => {
+			// safely process each asset here
+		});
+
+		// Background
+		const backgroundImage =
+			this.background_image ||
+			this.configData.background_image ||
+			this.configData.combatLocation ||
+			locationPaths[0];
+		phaser.load.image('background', getUrl('locations/' + backgroundImage));
+
+		// Branding
+		phaser.load.image('AncientBeastLogo', getUrl('interface/AncientBeast'));
+
+		// Load artwork, shout and avatar for each unit
+		this.loadUnitData(unitData);
 	}
 
 	hexAt(x: number, y: number): Hex | undefined {
@@ -885,6 +912,24 @@ export default class Game {
 	}
 
 	handleLobbyMessage(message: GameMessage): void {
+		if (message.type === 'intent') {
+			const intent = message.intent;
+			switch (intent.kind) {
+				case 'skip':
+					this.action({ action: 'skip' }, { callback() {} });
+					break;
+				case 'delay':
+					this.action({ action: 'delay' }, { callback() {} });
+					break;
+				case 'move':
+					this.action({ action: 'move', target: intent.target, path: intent.path }, { callback() {} });
+					break;
+				case 'ability':
+					this.action({ action: 'ability', id: intent.id, target: intent.target, args: intent.args }, { callback() {} });
+					break;
+			}
+			return;
+		}
 		if (message.type === 'match-start') {
 			// Idempotency guard: the host calls loadGame() directly in
 			// startMultiplayerMatch() and ALSO receives its own echoed
@@ -1023,6 +1068,10 @@ export default class Game {
 		if (!this.multiplayer || !this.lobby || !this.activeCreature) {
 			return;
 		}
+		if (this.authoritative) {
+			this.sendIntent({ kind: 'move', target, path } as Intent);
+			return;
+		}
 		this.lobby.sendAction({
 			type: 'action-move',
 			target,
@@ -1046,6 +1095,20 @@ export default class Game {
 		if (!this.multiplayer || !this.lobby || !this.activeCreature) {
 			return;
 		}
+		// Server-authoritative mode: emit an `Intent` (input) instead of a relay
+		// action message. The acting client does NOT apply locally here — the
+		// processor applies it through the engine and broadcasts the resulting
+		// authoritative state, which this client adopts (see adoptAuthoritativeState).
+		// The relay path below stays as the safeguard when authoritative is off.
+		if (this.authoritative) {
+			this.sendIntent({
+				kind: 'ability',
+				id: params.id,
+				target: params.target as any,
+				args: params.args,
+			} as Intent);
+			return;
+		}
 		this.lobby.sendAction({
 			type: 'action-ability',
 			id: params.id,
@@ -1054,6 +1117,80 @@ export default class Game {
 			playerId: this.lobby.getLocalPlayer()?.playerId || '',
 			creatureId: this.activeCreature.id,
 		});
+	}
+
+	/** Send a player input to the authoritative server (transport-agnostic). */
+	sendIntent(intent: Intent): void {
+		if (!this.lobby) {
+			return;
+		}
+		void this.lobby.sendIntent(intent);
+	}
+
+	/**
+	 * Adopt an authoritative state snapshot as the single source of truth.
+	 * Reconciles creature positions/health/energy/dead/status, the queue order,
+	 * the active creature, turn/round, and player scores to match the server.
+	 * Used in server-authoritative mode so every client converges on identical
+	 * state regardless of its own (now-irrelevant) local simulation.
+	 */
+	adoptAuthoritativeState(state: AuthoritativeState): void {
+		// Best-effort reconciliation against the real `Game`/`Creature` shapes,
+		// which are stricter than the serializable snapshot. Cast to `any` so the
+		// authoritative state can drive the live game without fighting internal
+		// types; the fields we set are the canonical ones `serializeState` reads.
+		const g = this as any;
+		for (const snap of state.creatures) {
+			const creature = g.creatures[snap.id];
+			if (!creature) {
+				continue;
+			}
+			creature.x = snap.x;
+			creature.y = snap.y;
+			creature.health = snap.health;
+			if (creature.stats) {
+				creature.stats.health = snap.maxHealth;
+				creature.stats.energy = snap.maxEnergy;
+			}
+			creature.energy = snap.energy;
+			creature.dead = snap.dead;
+			if ('isVaporized' in creature) creature.isVaporized = snap.vaporized;
+			creature.remainingMove = snap.remainingMove;
+			if (creature.status) {
+				creature.status.frozen = snap.status.frozen;
+				creature.status.dizzy = snap.status.dizzy;
+				creature.status.cryostasis = snap.status.cryostasis;
+			}
+			if (snap.dead && !creature.dead && typeof creature.die === 'function') {
+				try {
+					creature.die(true);
+				} catch {
+					/* best-effort; state fields already set above */
+				}
+			}
+			const sprite = creature.sprite;
+			if (sprite && sprite.position && typeof sprite.position.set === 'function') {
+				try {
+					sprite.position.set(snap.x, snap.y);
+				} catch {
+					/* non-fatal */
+				}
+			}
+		}
+
+		g.turn = state.turn;
+		g.round = state.round;
+		g.gameState = state.gameState;
+		g.activeCreature =
+			state.activeCreatureId != null ? g.creatures[state.activeCreatureId] : g.activeCreature;
+
+		for (const playerSnap of state.players) {
+			const player = g.players[playerSnap.playerIndex];
+			const score = player && player.score;
+			if (score && typeof score.setTotal === 'function') {
+				score.setTotal(playerSnap.score);
+			}
+		}
 	}
 	/**
 	 * Resize the combat frame
@@ -1269,12 +1406,16 @@ export default class Game {
 		}
 
 		if (!remote && this.multiplayer && this.lobby) {
-			this.lobby.sendAction({
-				type: 'action-end',
-				action: 'skip',
-				playerId: this.lobby.getLocalPlayer()?.playerId || '',
-				creatureId: this.activeCreature?.id || 0,
-			});
+			if (this.authoritative) {
+				this.sendIntent({ kind: 'skip' } as Intent);
+			} else {
+				this.lobby.sendAction({
+					type: 'action-end',
+					action: 'skip',
+					playerId: this.lobby.getLocalPlayer()?.playerId || '',
+					creatureId: this.activeCreature?.id || 0,
+				});
+			}
 		}
 
 		o = $j.extend(
@@ -1344,17 +1485,22 @@ export default class Game {
 			return;
 		}
 
+
 		if (this.turnThrottle && !remote) {
 			return;
 		}
 
 		if (!remote && this.multiplayer && this.lobby) {
-			this.lobby.sendAction({
-				type: 'action-end',
-				action: 'delay',
-				playerId: this.lobby.getLocalPlayer()?.playerId || '',
-				creatureId: this.activeCreature?.id || 0,
-			});
+			if (this.authoritative) {
+				this.sendIntent({ kind: 'delay' } as Intent);
+			} else {
+				this.lobby.sendAction({
+					type: 'action-end',
+					action: 'delay',
+					playerId: this.lobby.getLocalPlayer()?.playerId || '',
+					creatureId: this.activeCreature?.id || 0,
+				});
+			}
 		}
 
 		o = $j.extend(
@@ -1944,14 +2090,20 @@ export default class Game {
 				this.applyMoveRecord(o, opt.callback);
 				break;
 			case 'skip':
-				this.skipTurn({
-					callback: opt.callback,
-				});
+				this.skipTurn(
+					{
+						callback: opt.callback,
+					},
+					true,
+				);
 				break;
 			case 'delay':
-				this.delayCreature({
-					callback: opt.callback,
-				});
+				this.delayCreature(
+					{
+						callback: opt.callback,
+					},
+					true,
+				);
 				break;
 			case 'flee':
 				this.activeCreature.player.flee({
