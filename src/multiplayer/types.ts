@@ -1,3 +1,7 @@
+import type { AuthoritativeState, Intent } from './authoritative';
+
+export type { AuthoritativeState, Intent } from './authoritative';
+
 export type PeerId = string;
 export type LobbyCode = string;
 export type PlayerId = string;
@@ -78,6 +82,14 @@ export type GameMessage = {
 			playerId: PlayerId;
 	  }
 	| { type: 'heartbeat'; timestamp: number; playerId: PlayerId }
+	// ── Server-authoritative dialect (transport-agnostic; flows through any
+	//    ITransport alongside the relay dialect above). A client sends `intent`
+	//    (its input); the server applies it through the deterministic engine and
+	//    broadcasts the resulting `authoritative-state` snapshot to every client,
+	//    which adopts it. Both dialects share the same envelope so transports
+	//    (Devvit realtime, PeerJS, Rivalis, Hono) just carry the bytes.
+	| { type: 'intent'; intent: Intent; playerId: PlayerId }
+	| { type: 'authoritative-state'; state: AuthoritativeState; sequence: number }
 );
 
 export interface TransportConnectOptions {
@@ -136,8 +148,12 @@ export interface INetworkBackend {
 	getLocalPlayer(): LobbyPlayer | undefined;
 	markMatchStarted(): void;
 	sendGameMessage(message: GameMessage): Promise<void>;
+	/** Send a player input to the authoritative server (transport-agnostic). */
+	sendIntent(intent: Intent): Promise<void>;
 	onLobbyUpdate(cb: (lobby: LobbyState) => void): void;
 	onGameMessage(cb: (message: GameMessage) => void): void;
+	/** Receive authoritative state snapshots broadcast by the server. */
+	onAuthoritativeState(cb: (state: AuthoritativeState) => void): void;
 }
 
 export function normalizeLobbyCode(code: LobbyCode): string {

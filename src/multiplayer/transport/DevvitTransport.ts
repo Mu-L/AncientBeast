@@ -1,4 +1,5 @@
 import type { GameMessage, ITransport, PeerId, TransportConnectOptions } from '../types';
+import { safeStringify } from './safeStringify';
 
 export { type ITransport } from '../types';
 
@@ -117,7 +118,7 @@ export class DevvitTransport implements ITransport {
 		}
 
 		const fetchImpl = this.deps.fetchImpl ?? fetch;
-		const body = JSON.stringify({ message: data, playerId: this.myId });
+		const body = safeStringify({ message: data, playerId: this.myId });
 
 		try {
 			await fetchImpl(`/api/lobby/${encodeURIComponent(this.lobbyCode)}/message`, {

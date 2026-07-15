@@ -1,8 +1,10 @@
 import { DevvitTransport } from './transport/DevvitTransport';
 import type {
+	AuthoritativeState,
 	GameConfig,
 	GameMessage,
 	INetworkBackend,
+	Intent,
 	LobbyCode,
 	LobbyPlayer,
 	LobbySession,
@@ -164,12 +166,28 @@ export class DevvitLobbyProvider implements INetworkBackend {
 		await this.transport.send(message);
 	}
 
+	async sendIntent(intent: Intent): Promise<void> {
+		await this.transport.send({
+			type: 'intent',
+			intent,
+			playerId: this.transport.getMyId(),
+		});
+	}
+
 	onLobbyUpdate(cb: (lobby: LobbyState) => void): void {
 		this.lobbyUpdateHandlers.push(cb);
 	}
 
 	onGameMessage(cb: (message: GameMessage) => void): void {
 		this.gameMessageHandlers.push(cb);
+	}
+
+	onAuthoritativeState(cb: (state: AuthoritativeState) => void): void {
+		this.gameMessageHandlers.push((message) => {
+			if (message.type === 'authoritative-state') {
+				cb(message.state);
+			}
+		});
 	}
 
 	private wireTransport(): void {
@@ -204,7 +222,7 @@ export class DevvitLobbyProvider implements INetworkBackend {
 		// so re-applying its own echoed action would duplicate the effect (stacked units,
 		// double turn-activation, etc.). Peer mode avoids this via sendExcept(peerId,...).
 		// Mirror that here: ignore action messages that originated from this client.
-		if (peerId === this.transport.getMyId() && isSelfAppliedActionMessage(message)) {
+		if (peerId === this.transport.getMyId() && (isSelfAppliedActionMessage(message) || message.type === 'intent')) {
 			return;
 		}
 

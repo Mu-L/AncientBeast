@@ -2,9 +2,11 @@ import { PlayerIdentity } from './identity';
 import { PeerTransport } from './transport/PeerTransport';
 import { ITransport } from './transport/ITransport';
 import {
+	AuthoritativeState,
 	GameConfig,
 	GameMessage,
 	INetworkBackend,
+	Intent,
 	isActionMessage,
 	LobbyCode,
 	LobbyPlayer,
@@ -156,12 +158,28 @@ export class PeerLobbyProvider implements INetworkBackend {
 		this.transport.send(message);
 	}
 
+	async sendIntent(intent: Intent): Promise<void> {
+		this.transport.send({
+			type: 'intent',
+			intent,
+			playerId: this.transport.getMyId(),
+		});
+	}
+
 	onLobbyUpdate(cb: (lobby: LobbyState) => void): void {
 		this.lobbyUpdateHandlers.push(cb);
 	}
 
 	onGameMessage(cb: (message: GameMessage) => void): void {
 		this.gameMessageHandlers.push(cb);
+	}
+
+	onAuthoritativeState(cb: (state: AuthoritativeState) => void): void {
+		this.gameMessageHandlers.push((message) => {
+			if (message.type === 'authoritative-state') {
+				cb(message.state);
+			}
+		});
 	}
 
 	private wireTransport(): void {

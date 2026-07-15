@@ -1,5 +1,6 @@
 import type Game from '../game';
 import { PeerLobbyProvider } from './PeerLobbyProvider';
+import type { AuthoritativeState, Intent } from './authoritative';
 import {
 	GameConfig,
 	GameMessage,
@@ -27,6 +28,7 @@ export class LobbyClient {
 		});
 
 		this.provider.onGameMessage((message) => this.game.handleLobbyMessage(message));
+		this.provider.onAuthoritativeState((state) => this.game.adoptAuthoritativeState(state));
 	}
 
 	async createMatch(config: GameConfig, code?: LobbyCode): Promise<LobbySession> {
@@ -53,6 +55,11 @@ export class LobbyClient {
 		await this.provider.sendGameMessage(message);
 	}
 
+	/** Send a player input to the authoritative server (transport-agnostic). */
+	async sendIntent(intent: Intent): Promise<void> {
+		await this.provider.sendIntent(intent);
+	}
+
 	isMyTurn(): boolean {
 		const localPlayer = this.provider.getLocalPlayer();
 
@@ -69,6 +76,11 @@ export class LobbyClient {
 
 	getLobbyState(): LobbyState {
 		return this.provider.getLobbyState();
+	}
+
+	/** Receive authoritative state snapshots broadcast by the server. */
+	onAuthoritativeState(cb: (state: AuthoritativeState) => void): void {
+		this.provider.onAuthoritativeState(cb);
 	}
 
 	getLocalPlayer() {
