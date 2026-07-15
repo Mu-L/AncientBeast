@@ -29,6 +29,7 @@ export interface LobbyMeta {
 }
 
 export const QUEUE_KEY = 'ab:queue';
+export const ACTIVE_MATCHES_KEY = 'ab:activeMatches';
 const RECENT_TTL_SECONDS = 86400;
 const RECENT_RETRY_MS = 15000;
 const MATCHED_TTL_SECONDS = 300;
@@ -43,11 +44,21 @@ function recentKey(playerIdA: string, playerIdB: string): string {
 	return `ab:recent:${a}:${b}`;
 }
 
+function generateMatchCode(): string {
+	// Must match the AB-XXXX format validated by parseLobbyCodeInput on the client.
+	const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+	let suffix = '';
+	for (let i = 0; i < 4; i++) {
+		suffix += alphabet[Math.floor(Math.random() * alphabet.length)];
+	}
+	return `AB-${suffix}`;
+}
+
 export async function createLobby(
 	redis: RedisLike,
 	initialMeta?: Partial<LobbyMeta>,
 ): Promise<string> {
-	const code = crypto.randomUUID().slice(0, 8).toUpperCase();
+	const code = generateMatchCode();
 	const meta: LobbyMeta = {
 		code,
 		config: {},
@@ -176,7 +187,17 @@ export async function handleQueueStatus(
 	redis: RedisLike,
 	playerId: string,
 ): Promise<{ status: string; lobbyCode?: string; bot?: boolean }> {
-	const lobbyCode = await redis.get(matchedKey(playerId));
+	let lobbyCode = await redis.get(matchedKey(playerId));
+
+	if (!lobbyCode) {
+		// Nothing else re-invokes matchmaking after the initial join, so the bot-fallback
+		// (which only kicks in once QUEUE_TIMEOUT_MS has elapsed) would otherwise never
+		// trigger. The client polls this endpoint every second while waiting, so retry
+		// matchmaking here too, each time it's called.
+		await tryMatchQueue(redis, { allowBotFallback: true });
+		lobbyCode = await redis.get(matchedKey(playerId));
+	}
+
 	if (lobbyCode) {
 		const meta = await redis.get(`ab:lobby:${lobbyCode}:meta`);
 		if (meta) {
@@ -185,4 +206,13 @@ export async function handleQueueStatus(
 		}
 	}
 	return { status: 'waiting' };
+}
+
+export async function handleQueueLeave(
+	redis: RedisLike,
+	playerId: string,
+): Promise<{ status: 'left' }> {
+	await redis.zRem(QUEUE_KEY, [playerId]);
+	await redis.del(matchedKey(playerId));
+	return { status: 'left' };
 }
