@@ -129,12 +129,14 @@ export default class Game {
 	multiplayer: boolean;
 	/**
 	 * Server-authoritative mode toggle. When true, the client sends `Intent`s
-	 * (inputs) to the authoritative processor and applies them via `applyIntent`
-	 * when received (no optimistic local application). This eliminates the
-	 * relay desync bugs (e.g., Fiery Touch/Claw not syncing). Kept ON by
-	 * default; the relay code path remains in the tree as a fallback if needed.
+	 * to the server-authoritative processor and applies them via `applyIntent`
+	 * when received (no optimistic local application). When false, the client
+	 * uses relay `action-*` messages and relies on the transport to drop its
+	 * own echoed messages. The Devvit backend currently uses relay, so we
+	 * default to false to avoid applying each action twice (once locally,
+	 * again when the intent echo arrives).
 	 */
-	authoritative: boolean;
+	authority: boolean;
 	lobby: LobbyClient | null;
 	lobbyCode: string;
 	lobbyState: LobbyState | null;
@@ -333,7 +335,7 @@ export default class Game {
 		this.configData = {};
 		this.match = {};
 		this.multiplayer = false;
-		this.authoritative = true;
+		this.authority = false;
 		this.lobby = null;
 		this.lobbyCode = '';
 		this.lobbyState = null;
@@ -1080,7 +1082,7 @@ export default class Game {
 		if (!this.multiplayer || !this.lobby || !this.activeCreature) {
 			return;
 		}
-		if (this.authoritative) {
+		if (this.authority) {
 			this.sendIntent({ kind: 'move', target, path } as Intent);
 			return;
 		}
@@ -1107,12 +1109,13 @@ export default class Game {
 		if (!this.multiplayer || !this.lobby || !this.activeCreature) {
 			return;
 		}
-		// Server-authoritative mode: emit an `Intent` (input) instead of a relay
-		// action message. The acting client does NOT apply locally here — the
-		// processor applies it through the engine and broadcasts the resulting
-		// authoritative state, which this client adopts (see adoptAuthoritativeState).
-		// The relay path below stays as the safeguard when authoritative is off.
-		if (this.authoritative) {
+		// authority mode: emit an `Intent` (input) instead of a relay action
+		// message. The acting client does NOT apply locally here — the processor
+		// applies it through the engine and broadcasts the resulting
+		// authoritative state, which this client adopts (see
+		// adoptAuthoritativeState). The relay path below stays as the safeguard
+		// when authority is false.
+		if (this.authority) {
 			this.sendIntent({
 				kind: 'ability',
 				id: params.id,
@@ -1319,7 +1322,7 @@ export default class Game {
 					this.lobby &&
 					!remote &&
 					wasLocalPlayersTurn &&
-					!this.authoritative
+					!this.authority
 				) {
 					this.lobby.sendAction({
 						type: 'turn-update',
@@ -1425,7 +1428,7 @@ export default class Game {
 		}
 
 		if (!remote && this.multiplayer && this.lobby) {
-			if (this.authoritative) {
+			if (this.authority) {
 				this.sendIntent({ kind: 'skip' } as Intent);
 				return;
 			}
@@ -1509,7 +1512,7 @@ export default class Game {
 		}
 
 		if (!remote && this.multiplayer && this.lobby) {
-			if (this.authoritative) {
+			if (this.authority) {
 				this.sendIntent({ kind: 'delay' } as Intent);
 				return;
 			}
