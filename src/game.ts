@@ -751,8 +751,8 @@ export default class Game {
 		// Remove loading screen
 		$j('#matchMaking').hide();
 		// Marks the body so the build-version badge in the lower-right corner
-		// hides during gameplay (it pops back in on round-marker hover — see
-		// `body.in-game .build-badge` in styles.less and the hover handler in
+		// hides during gameplay (the version is surfaced in the quickInfo
+		// tooltip on round-marker hover instead — see gameFormatter in
 		// ui/interface.ts).
 		$j('body').addClass('in-game');
 

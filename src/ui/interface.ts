@@ -15,6 +15,7 @@ import { MetaPowers } from './meta-powers';
 import { Queue } from './queue';
 import { QuickInfo } from './quickinfo';
 import { pretty as version } from '../utility/version';
+import { getDevvitAppVersion } from '../utility/clientVersion';
 import { capitalize } from '../utility/string';
 import { throttle } from 'underscore';
 import { DEBUG_DISABLE_HOTKEYS } from '../debug';
@@ -3616,8 +3617,6 @@ export class UI {
 		$j('#matchMaking').show();
 		$j('#gameSetupContainer').show();
 		$j('#loader').addClass('hide');
-		// Restore the lower-right build-version badge (it was hidden during
-		// gameplay by the `in-game` body class — see game.ts and styles.less).
 		$j('body').removeClass('in-game');
 		this.queue.empty(Queue.IMMEDIATE);
 	}
@@ -3744,10 +3743,13 @@ export class UI {
 		};
 
 		const gameFormatter = () => {
+			const devvit = getDevvitAppVersion();
+			const devvitLine = devvit ? `<p>r${devvit}</p>` : '';
 			return `<div class="vignette hex">
 			<div class="hexinfo frame">
 			<p class="name">Ancient Beast</p>
 			<p>${version}</p>
+			${devvitLine}
 			</div>
 			</div>
 			`;
@@ -3925,10 +3927,6 @@ export class UI {
 			ui.brandlogo.alpha = 0;
 			ui.game.grid.showGrid(true);
 			ui.game.grid.showCurrentCreatureMovementInOverlay(ui.game.activeCreature);
-			// Reveal the lower-right build-version badge on round-marker hover
-			// (it's hidden during gameplay by default — see `body.in-game` in
-			// styles.less and renderBuildBadge in script.ts).
-			$j('#buildBadge').addClass('build-badge--hover-visible');
 		});
 
 		const onTurnEndMouseLeave = () => {
@@ -3938,7 +3936,6 @@ export class UI {
 				hex.cleanOverlayVisualState();
 			});
 			ui.game.grid.redoLastQuery();
-			$j('#buildBadge').removeClass('build-badge--hover-visible');
 		};
 
 		// Hide the project logo when navigating away using a hotkey

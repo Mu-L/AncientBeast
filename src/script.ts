@@ -808,12 +808,11 @@ function stopDevvitQueueCountdown() {
  * several experience versions live after upload, so "looks broken" can just
  * mean "you're on 0.0.51, not the fix").
  *
- * In the pre-match screen the badge is always visible and stacks the game
- * version on top of the Devvit experience version. During gameplay it is
- * hidden by default and re-appears (in the same lower-right spot) when the
- * user hovers a round marker in the queue — see `body.in-game .build-badge`
- * in styles.less and the hover handler in ui/interface.ts. Non-Devvit builds
- * only see the single game line.
+ * Only created for Devvit builds (non-Devvit builds have their own version
+ * display). In the pre-match screen the badge is always visible and stacks
+ * the game version on top of the Devvit experience version. During gameplay
+ * it is hidden by default — the version is surfaced in the lower-right
+ * quickInfo tooltip instead (see gameFormatter in ui/interface.ts).
  */
 function renderBuildBadge(): void {
 	const devvit = getDevvitAppVersion();
