@@ -79,15 +79,88 @@ $j(() => {
 	const joinCodeFromUrl = new URLSearchParams(window.location.search).get('join');
 	const lobbyCodeFromUrl = new URLSearchParams(window.location.search).get('lobby');
 	const netMode = new URLSearchParams(window.location.search).get('net');
-	const devvitPlayerId = new URLSearchParams(window.location.search).get('playerId') || 'anon';
+	let devvitPlayerId = new URLSearchParams(window.location.search).get('playerId') || 'anon';
 
-	if (netMode === 'devvit') {
+	// The Devvit splash (`splash.html`) launches the match in the larger expanded
+	// "pop-up" webview via requestExpandedMode(_, 'game'). Expanded mode can't carry
+	// query parameters, so the splash stashes the launch intent here and the full
+	// game reads it on bootstrap. This also lets us detect we're running expanded
+	// (handy for hiding the inline-only prematch chrome).
+	let devvitLaunch: { mode: 'bot' | 'queue' | 'lobby'; playerId: string; lobby?: string } | null =
+		null;
+	try {
+		const raw = localStorage.getItem('ab:devvitLaunch');
+		if (raw) {
+			devvitLaunch = JSON.parse(raw) as typeof devvitLaunch;
+			localStorage.removeItem('ab:devvitLaunch');
+		}
+	} catch (_error) {
+		// Ignore malformed/unavailable storage.
+	}
+
+	const effectiveNetMode = netMode === 'devvit' ? 'devvit' : devvitLaunch ? 'devvit' : null;
+	if (devvitLaunch) {
+		devvitPlayerId = devvitLaunch.playerId || devvitPlayerId;
+	}
+
+	if (effectiveNetMode === 'devvit') {
 		// The "please rotate your device" prompt can't reliably be escaped inside Reddit's
 		// webview (fullscreen/orientation APIs are unreliable there), so just disable it
 		// entirely for Devvit — see #orientation-message.devvit-mode override in styles.less.
 		$j('body').addClass('devvit-mode');
 
-		if (lobbyCodeFromUrl && lobbyCodeFromUrl !== 'menu') {
+		if (devvitLaunch) {
+			// Launched from the Devvit splash in expanded ("pop-up") mode.
+			if (devvitLaunch.mode === 'bot') {
+				G.multiplayer = false;
+				const botConfig = {
+					...getGameConfig(),
+					gameMode: 2,
+					players: [0],
+				};
+				G.loadGame(botConfig);
+			} else if (devvitLaunch.mode === 'queue') {
+				// The splash already opened expanded mode on the click gesture; now we
+				// run the existing, tested queue flow (poll + countdown) in the larger
+				// webview, reusing the in-game Devvit lobby UI.
+				setupDevvitQueueUi(devvitPlayerId);
+				setDevvitQueueButtonState('joining');
+				attachDevvitQueueButtonHandler(devvitPlayerId);
+				attachDevvitBotPracticeButtonHandler(devvitPlayerId);
+				void joinDevvitQueue(devvitPlayerId);
+			} else if (devvitLaunch.lobby) {
+				const parsedJoinCode = parseLobbyCodeInput(devvitLaunch.lobby);
+				if (parsedJoinCode) {
+					G.multiplayer = true;
+					forceTwoPlayerMode();
+					renderGameModeType(G.multiplayer);
+					G.lobbyCode = parsedJoinCode;
+					$j('#lobbyCode').val(G.lobbyCode);
+					isJoiningLobby = true;
+					setDevvitQueueButtonState('matched');
+					G.joinLobbyByCode(G.lobbyCode)
+						.then(() => {
+							isJoiningLobby = false;
+							updateLobbyUi();
+						})
+						.catch((error) => {
+							isJoiningLobby = false;
+							console.error(error);
+							G.lobby?.leaveMatch();
+							G.lobby = null;
+							G.lobbyState = null;
+							G.lobbyCode = '';
+							G.multiplayer = false;
+							$j('#p4').prop('disabled', false);
+							renderGameModeType(G.multiplayer);
+							$j('#lobbyCode').val('');
+							updateLobbyUi();
+							setDevvitQueueButtonState('join');
+							attachDevvitQueueButtonHandler(devvitPlayerId);
+						});
+				}
+			}
+		} else if (lobbyCodeFromUrl && lobbyCodeFromUrl !== 'menu') {
 			const parsedJoinCode = parseLobbyCodeInput(lobbyCodeFromUrl);
 			if (parsedJoinCode) {
 				G.multiplayer = true;
@@ -781,7 +854,7 @@ function setDevvitQueueButtonState(state: DevvitQueueButtonState) {
 
 	switch (state) {
 		case 'join':
-			$button.val('Join Queue').prop('disabled', false).toggleClass('disabled', false);
+			$button.val('Online Duel').prop('disabled', false).toggleClass('disabled', false);
 			break;
 		case 'joining':
 			$button.val('Joining...').prop('disabled', true).toggleClass('disabled', true);

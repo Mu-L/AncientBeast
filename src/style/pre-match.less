@@ -54,7 +54,8 @@
 	background: black url('~assets/interface/Reaper.jpg') no-repeat center top;
 	background-size: cover;
 	color: white;
-	overflow: auto;
+	overflow-x: hidden;
+	overflow-y: auto;
 	/* Prevent flashing text caret in Firefox on focusable containers */
 	caret-color: transparent;
 
@@ -788,9 +789,18 @@ body.devvit-mode {
 		display: flex;
 	}
 
+	// The `.lobby` wrapper is fixed at 495px (see base rule) which overflows the
+	// narrow expanded ("pop-up") modal on mobile and produces an unwanted
+	// horizontal scroll. Let it shrink to the viewport in Devvit mode.
+	.lobby {
+		width: auto;
+		max-width: 100%;
+	}
+
 	#matchMaking {
 		background: black url('~assets/interface/splash.jpg') no-repeat center top;
 		background-size: cover;
 		background-position: center;
+		overflow-x: hidden;
 	}
 }

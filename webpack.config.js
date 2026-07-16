@@ -81,6 +81,10 @@ module.exports = (env, argv) => {
 			vendor: ['pixi', 'p2', 'phaser'],
 			app: ['babel-polyfill', path.resolve(__dirname, 'src', 'script.ts')],
 			...(isDevvitTarget && {
+				// Splash screen (Devvit `default` entrypoint): Bot Practice / Join Queue.
+				splash: path.resolve(__dirname, 'src', 'devvit', 'splash.ts'),
+				// Thin bridge that loads the full game in Devvit's expanded "pop-up"
+				// webview (Devvit `game` entrypoint). See src/devvit/game-entry.ts.
 				gameEntry: path.resolve(__dirname, 'src', 'devvit', 'game-entry.ts'),
 			}),
 		},
@@ -219,6 +223,12 @@ module.exports = (env, argv) => {
 			}),
 			...(isDevvitTarget
 				? [
+						new HtmlWebpackPlugin({
+							template: path.resolve(__dirname, 'src', 'devvit', 'splash.ejs'),
+							filename: 'splash.html',
+							chunks: ['splash'],
+							inject: 'body',
+						}),
 						new HtmlWebpackPlugin({
 							template: path.resolve(__dirname, 'src', 'devvit', 'game-entry.html'),
 							filename: 'game.html',

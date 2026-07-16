@@ -17,5 +17,5 @@
 		"types": ["jest", "jquery"]
 	},
 	"include": ["src", "types", "assets"],
-	"exclude": ["node_modules", "src/devvit/game-entry.ts"]
+	"exclude": ["node_modules", "src/devvit/game-entry.ts", "src/devvit/splash.ts"]
 }

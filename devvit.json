@@ -11,6 +11,10 @@
     "dir": "dist/client",
     "entrypoints": {
       "default": {
+        "entry": "splash.html",
+        "height": "regular"
+      },
+      "game": {
         "entry": "game.html",
         "height": "regular"
       }
