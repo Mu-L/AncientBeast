@@ -1699,7 +1699,10 @@ export class Creature {
 	}
 
 	displayHealthStats() {
-		this.removePlasmaShield();
+		// Hide (don't destroy) the field so that re-showing it on the next
+		// hover/display toggle resumes the animation from where it left off
+		// instead of recreating it and resetting the plasma flow.
+		this.hidePlasmaShield();
 		this.creatureSprite.setHealth(this.health, this.isFrozen() ? 'frozen' : 'health');
 	}
 
@@ -1740,9 +1743,8 @@ export class Creature {
 			const cardboard = this.creatureSprite.sprite;
 			const hueShift = PLASMA_FIELD_HUE_BY_COLOR[this.player.color] || 0;
 
-			// On lower-end machines, reduce the plasma field rendering cost.
-			// Very weak hardware (<=2 cores) gets a static pre-rendered shield;
-			// weak hardware (<=4 cores) renders at a much lower resolution.
+			// On lower-end machines, reduce the plasma field rendering cost by
+			// lowering its internal render resolution.
 			this._plasmaFieldBaseOffsetX = computeCardboardCenterOffset(phaser, cardboard);
 			const offsetXMirror = (cardboard.scale.x < 0 ? -1 : 1) * this._plasmaFieldBaseOffsetX;
 
@@ -1751,20 +1753,13 @@ export class Creature {
 				hueShift,
 				creature: this,
 			};
-			if (detectVeryWeakHardware()) {
-				opts.staticMode = true;
-			} else {
-				let renderScale = 1;
-				if (detectWeakHardware()) {
-					renderScale = Math.max(renderScale, 4);
-				}
-				const displayScale = computePlasmaRenderScale();
-				if (displayScale > 1) {
-					renderScale = Math.max(renderScale, displayScale);
-				}
-				if (renderScale > 1) {
-					opts.renderScale = renderScale;
-				}
+			if (detectWeakHardware()) {
+				// 4-core (and below) machines: keep the field at a reduced
+				// internal resolution. 2-or-fewer cores use renderScale 4 (1/4
+				// res) for the biggest fill-rate saving; other weak hardware
+				// (3-4 cores) uses 2 (1/2 res) which stays smooth on the small
+				// ~700x512 game screen.
+				opts.renderScale = detectVeryWeakHardware() ? 4 : 2;
 			}
 
 			this.plasmaField = new PlasmaField(
@@ -1786,6 +1781,13 @@ export class Creature {
 		}
 
 		this.plasmaField.setVisible(true);
+	}
+
+	/** Hide the field without tearing it down, so it can be reused (no reset). */
+	private hidePlasmaShield() {
+		if (this.plasmaField) {
+			this.plasmaField.setVisible(false);
+		}
 	}
 
 	/**

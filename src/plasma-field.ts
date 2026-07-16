@@ -30,7 +30,6 @@ export interface PlasmaFieldSettings {
 	scaleX: number;
 	scaleY: number;
 	hueShift: number;
-	crtPixelate: boolean;
 }
 
 export interface PlasmaFieldOptions extends Partial<PlasmaFieldSettings> {
@@ -78,7 +77,7 @@ export function computePlasmaRenderScale(): number {
 		if (typeof window !== 'undefined') {
 			const displayWidth = window.innerWidth || 0;
 			const ratio = displayWidth / LOGICAL_GAME_WIDTH;
-			if (ratio < 0.4) return 4;
+			if (ratio < 0.4) return 2;
 			if (ratio < 0.75) return 2;
 		}
 	} catch {
@@ -111,7 +110,6 @@ const DEFAULT_SETTINGS: PlasmaFieldSettings = {
 	scaleX: 1.25,
 	scaleY: 1.4,
 	hueShift: 0.0,
-	crtPixelate: true,
 };
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -172,16 +170,13 @@ let _sharedTimer: Phaser.TimerEvent | null = null;
 let _sharedPhaser: Phaser.Game | null = null;
 const _activeFields = new Set<PlasmaField>();
 
-const SHARED_FPS_BASE = 24;
-const SHARED_FPS_BUSY = 16;
+// Fixed cadence for the shared ticker. We never mutate a running TimerEvent's
+// `delay` (which in Phaser CE does not reset the elapsed accumulator and
+// causes an immediately-fired, skipped frame). Instead the ticker runs at a
+// steady rate and each field self-throttles its own draw cadence below.
+const SHARED_TICK_FPS = 24;
 
 function _tickAllFields(): void {
-	// Reduce the animation rate when several shields animate at once so the
-	// game's frame rate does not dip while a 4th field is briefly shown.
-	const fps = _activeFields.size > 2 ? SHARED_FPS_BUSY : SHARED_FPS_BASE;
-	if (_sharedTimer && _sharedTimer.delay !== Phaser.Timer.SECOND / fps) {
-		_sharedTimer.delay = Phaser.Timer.SECOND / fps;
-	}
 	for (const field of _activeFields) {
 		if (field.sprite.visible && field.sprite.inCamera !== false) {
 			field.tick();
@@ -192,7 +187,7 @@ function _tickAllFields(): void {
 function _ensureTicker(): void {
 	if (_sharedTimer || !_sharedPhaser) return;
 	_sharedTimer = _sharedPhaser.time.events.loop(
-		Phaser.Timer.SECOND / SHARED_FPS_BASE,
+		Phaser.Timer.SECOND / SHARED_TICK_FPS,
 		_tickAllFields,
 	);
 }
@@ -246,6 +241,8 @@ export class PlasmaField {
 	private ry: number;
 
 	private renderScale: number;
+	private baseRenderScale: number;
+	private displayRenderScale: number;
 	private rw: number;
 	private rh: number;
 
@@ -275,7 +272,9 @@ export class PlasmaField {
 		this.rx = opt.radiusX || 58;
 		this.ry = opt.radiusY || 94;
 
-		this.renderScale = opt.renderScale || 1;
+		this.baseRenderScale = opt.renderScale || 1;
+		this.displayRenderScale = 1;
+		this.renderScale = this.baseRenderScale;
 		this.rw = Math.floor(this.w / this.renderScale);
 		this.rh = Math.floor(this.h / this.renderScale);
 
@@ -508,7 +507,7 @@ export class PlasmaField {
 
 		const out = this.bmd.ctx;
 		out.clearRect(0, 0, this.w, this.h);
-		out.imageSmoothingEnabled = !set.crtPixelate;
+		out.imageSmoothingEnabled = true;
 		out.drawImage(this.low, 0, 0, this.w, this.h);
 
 		out.save();
@@ -586,6 +585,9 @@ export class PlasmaField {
 
 	tick = (): void => {
 		this.frame++;
+		// Steady animation step. The shared ticker fires at a fixed rate, so
+		// advancing by a constant keeps the plasma flowing smoothly regardless
+		// of how many fields are currently on screen.
 		this.time += 1 / 24;
 		if (this.burstPower > 0) {
 			this.burstPower = Math.max(0, this.burstPower - 0.08);
@@ -632,9 +634,12 @@ export class PlasmaField {
 		if (this.bmd && this.bmd.destroy) this.bmd.destroy();
 	}
 
-	updateRenderScale(scale: number): void {
-		if (scale <= 1 || this.renderScale === scale) return;
-		this.renderScale = scale;
+	/** Recompute the effective render scale from the display-derived factor. */
+	updateRenderScale(displayScale: number): void {
+		this.displayRenderScale = displayScale > 1 ? displayScale : 1;
+		const effective = Math.max(this.baseRenderScale, this.displayRenderScale);
+		if (this.renderScale === effective) return;
+		this.renderScale = effective;
 		this.rw = Math.floor(this.w / this.renderScale);
 		this.rh = Math.floor(this.h / this.renderScale);
 		this.low.width = this.rw;
