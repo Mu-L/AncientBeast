@@ -3339,9 +3339,6 @@ input {
 			transform: scale(0.55);
 			transform-origin: right bottom;
 		}
-		#chat {
-			display: none !important;
-		}
 
 	#scoreboardTitle {
 		font-size: medium;
@@ -3390,9 +3387,6 @@ input {
 			bottom: 0;
 			transform: scale(0.7);
 			transform-origin: right bottom;
-		}
-		#chat {
-			display: none !important;
 		}
 
 	#scoreboardTitle {
@@ -3746,5 +3740,35 @@ body.devvit-mode .button#fullscreen {
 	#chat.expanded {
 		height: 120px;
 		bottom: 0;
+	}
+}
+
+/* On short landscape viewports (Devvit's ~700x512 webview is one example), the
+   bottom-anchored combat log overlapped the bottom row of hexagons. Pin it to
+   the top instead (where the on-hover unit stats widget appears) so it no
+   longer covers the board. This is a pure positional mirror of the normal
+   bottom layout: identical heights, identical message order (newest at the
+   bottom of the box, clipped to a single row when minimized) and identical
+   scroll behavior — the panel only grows downward from its top anchor. */
+@media screen and (max-height: 512px) and (orientation: landscape) {
+	#unit-hover-panel {
+		top: 38px;
+	}
+
+	#chat {
+		top: 8px;
+		bottom: auto;
+	}
+
+	#chat.expanded,
+	#chat.focus,
+	#chat.peek {
+		top: 8px;
+		bottom: auto;
+	}
+
+	#chat.expanded {
+		top: 8px !important;
+		bottom: auto !important;
 	}
 }
