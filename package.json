@@ -76,6 +76,7 @@
     "playwright-core": "^1.61.0",
     "prettier": "^2.8.0",
     "style-loader": "^3.3.1",
+    "svgo": "^3.3.4",
     "terser-webpack-plugin": "^5.4.0",
     "ts-loader": "^9.4.2",
     "typescript": "^5.9.3",
@@ -101,8 +102,9 @@
     "jest": "echo '🧪 Running Jest unit tests' && jest",
     "start:jest": "echo '👀 Running Jest in interactive watch mode (re-runs on file change)' && jest --watch",
     "simulate": "echo '🎮 Running headless game simulation tests (sequential)' && jest --config jest.simulation.config.js --runInBand",
-    "devvit:upload": "echo '📤 Building + uploading to Devvit' && devvit upload",
-    "devvit:playtest": "echo '🎮 Building + starting Devvit playtest' && devvit playtest"
+    "svgo:stats": "echo '🧼 Stripping Devvit-rejected metadata from SVG icons' && node scripts/optimize-svgs.mjs assets/stats assets/icons assets/autoload/interface",
+    "devvit:playtest": "echo '🎮 Building + starting Devvit playtest' && devvit playtest",
+    "devvit:upload": "echo '📤 Building + uploading to Devvit' && devvit upload"
   },
   "lint-staged": {
     "*.{ts,js}": [
