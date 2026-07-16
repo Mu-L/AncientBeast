@@ -262,6 +262,7 @@ export class PlasmaField {
 	onBurstEnd: (() => void) | null;
 	private fps: number;
 	private _staticMode: boolean;
+	private _noCanvas = false;
 
 	constructor(phaser: Phaser.Game, x: number, y: number, opt: PlasmaFieldOptions = {}) {
 		this.phaser = phaser;
@@ -297,10 +298,14 @@ export class PlasmaField {
 		this.low.height = this.rh;
 		const ctx = this.low.getContext('2d', { willReadFrequently: true });
 		if (!ctx) {
-			throw new Error('Failed to get 2d context');
+			this._noCanvas = true;
+			this.lowCtx = {} as CanvasRenderingContext2D;
+			this._imgData = { data: new Uint8ClampedArray(this.rw * this.rh * 4) } as ImageData;
+		} else {
+			this._noCanvas = false;
+			this.lowCtx = ctx;
+			this._imgData = ctx.createImageData(this.rw, this.rh);
 		}
-		this.lowCtx = ctx;
-		this._imgData = this.lowCtx.createImageData(this.rw, this.rh);
 
 		this.bmd = phaser.add.bitmapData(this.w, this.h);
 		this.sprite = this.parent.create
@@ -368,6 +373,7 @@ export class PlasmaField {
 	}
 
 	private draw(): void {
+		if (this._noCanvas) return;
 		const set = this.settings;
 		const ctx = this.lowCtx;
 		const img = this._imgData;
@@ -644,7 +650,9 @@ export class PlasmaField {
 		this.rh = Math.floor(this.h / this.renderScale);
 		this.low.width = this.rw;
 		this.low.height = this.rh;
-		this._imgData = this.lowCtx.createImageData(this.rw, this.rh);
+		if (!this._noCanvas) {
+			this._imgData = this.lowCtx.createImageData(this.rw, this.rh);
+		}
 		this.draw();
 	}
 }
