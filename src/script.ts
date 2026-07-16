@@ -96,6 +96,7 @@ $j(() => {
 				G.lobbyCode = parsedJoinCode;
 				$j('#lobbyCode').val(G.lobbyCode);
 				isJoiningLobby = true;
+				setDevvitQueueButtonState('matched');
 				G.joinLobbyByCode(G.lobbyCode)
 					.then(() => {
 						isJoiningLobby = false;
@@ -113,6 +114,8 @@ $j(() => {
 						renderGameModeType(G.multiplayer);
 						$j('#lobbyCode').val('');
 						updateLobbyUi();
+						setDevvitQueueButtonState('join');
+						attachDevvitQueueButtonHandler(devvitPlayerId);
 					});
 			}
 		} else {
@@ -778,16 +781,16 @@ function setDevvitQueueButtonState(state: DevvitQueueButtonState) {
 
 	switch (state) {
 		case 'join':
-			$button.val('Join Queue').prop('disabled', false);
+			$button.val('Join Queue').prop('disabled', false).toggleClass('disabled', false);
 			break;
 		case 'joining':
-			$button.val('Joining...').prop('disabled', true);
+			$button.val('Joining...').prop('disabled', true).toggleClass('disabled', true);
 			break;
 		case 'leave':
-			$button.val('Leave Queue').prop('disabled', false);
+			$button.val('Cancel Queue').prop('disabled', false).toggleClass('disabled', false);
 			break;
 		case 'matched':
-			$button.val('Match Found').prop('disabled', true);
+			$button.val('Match Found').prop('disabled', true).toggleClass('disabled', true);
 			break;
 	}
 }
@@ -820,6 +823,16 @@ function setupDevvitQueueUi(playerId: string) {
 	refreshDevvitMatchesCounter();
 	window.setInterval(refreshDevvitMatchesCounter, 8000);
 
+	if (devvitQueueMatchPendingNavigation) {
+		setDevvitQueueButtonState('matched');
+		return;
+	}
+
+	attachDevvitQueueButtonHandler(playerId);
+	setDevvitQueueButtonState('join');
+}
+
+function attachDevvitQueueButtonHandler(playerId: string) {
 	$j('#devvitQueueButton')
 		.off('click')
 		.on('click', () => {
@@ -829,13 +842,6 @@ function setupDevvitQueueUi(playerId: string) {
 				joinDevvitQueue(playerId);
 			}
 		});
-
-	if (devvitQueueMatchPendingNavigation) {
-		setDevvitQueueButtonState('matched');
-		return;
-	}
-
-	setDevvitQueueButtonState('join');
 }
 
 async function refreshDevvitMatchesCounter() {

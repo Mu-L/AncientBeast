@@ -168,16 +168,21 @@ export async function handleQueueJoin(
 	redis: RedisLike,
 	playerId: string,
 ): Promise<{ status: string; lobbyCode?: string; bot?: boolean }> {
+	const existingMatch = await redis.get(matchedKey(playerId));
+	if (existingMatch) {
+		const meta = await redis.get(`ab:lobby:${existingMatch}:meta`);
+		if (meta) {
+			const parsed = JSON.parse(meta) as LobbyMeta;
+			return { status: 'matched', lobbyCode: existingMatch, bot: Boolean(parsed.bot) };
+		}
+		await redis.del(matchedKey(playerId));
+	}
+
 	const existing = await redis.zRange(QUEUE_KEY, 0, -1, { by: 'rank' });
 	const alreadyQueued = existing.some((entry) => entry.member === playerId);
 
 	if (!alreadyQueued) {
 		await redis.zAdd(QUEUE_KEY, { member: playerId, score: Date.now() });
-	}
-
-	const result = await tryMatchQueue(redis, { allowBotFallback: true });
-	if (result.matched && result.lobbyCode) {
-		return { status: 'matched', lobbyCode: result.lobbyCode, bot: result.bot };
 	}
 
 	return { status: 'waiting' };

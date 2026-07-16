@@ -92,24 +92,25 @@ describe('queue', () => {
 		expect(resA.status).toBe('waiting');
 
 		const resB = await handleQueueJoin(redis, 'player-b');
-		expect(resB.status).toBe('matched');
-		expect(resB.lobbyCode).toBeDefined();
-		expect(resA.lobbyCode).toBeUndefined();
+		expect(resB.status).toBe('waiting');
 
 		const statusA = await handleQueueStatus(redis, 'player-a');
 		expect(statusA.status).toBe('matched');
-		expect(statusA.lobbyCode).toBe(resB.lobbyCode);
+		expect(statusA.lobbyCode).toBeDefined();
 
 		const statusB = await handleQueueStatus(redis, 'player-b');
-		expect(statusB.lobbyCode).toBe(resB.lobbyCode);
+		expect(statusB.status).toBe('matched');
+		expect(statusB.lobbyCode).toBe(statusA.lobbyCode);
 	});
 
 	test('recent opponent is skipped within retry window', async () => {
 		const recentKey = 'ab:recent:player-a:player-b';
 		await redis.set(recentKey, '1');
 
-		await handleQueueJoin(redis, 'player-a');
-		await handleQueueJoin(redis, 'player-b');
+		const joinA = await handleQueueJoin(redis, 'player-a');
+		expect(joinA.status).toBe('waiting');
+		const joinB = await handleQueueJoin(redis, 'player-b');
+		expect(joinB.status).toBe('waiting');
 
 		const status = await handleQueueStatus(redis, 'player-a');
 		expect(status.status).toBe('waiting');
@@ -132,12 +133,15 @@ describe('queue', () => {
 		const oldTime = Date.now() - 35000;
 		await redis.zAdd('ab:queue', { member: 'player-a', score: oldTime });
 
-		const result = await handleQueueJoin(redis, 'player-a');
-		expect(result.status).toBe('matched');
-		expect(result.lobbyCode).toBeDefined();
-		expect(result.bot).toBe(true);
+		const joinResult = await handleQueueJoin(redis, 'player-a');
+		expect(joinResult.status).toBe('waiting');
 
-		const meta = JSON.parse((await redis.get(`ab:lobby:${result.lobbyCode}:meta`)) || '{}');
+		const status = await handleQueueStatus(redis, 'player-a');
+		expect(status.status).toBe('matched');
+		expect(status.lobbyCode).toBeDefined();
+		expect(status.bot).toBe(true);
+
+		const meta = JSON.parse((await redis.get(`ab:lobby:${status.lobbyCode}:meta`)) || '{}');
 		expect(meta.bot).toBe(true);
 	});
 
@@ -146,11 +150,11 @@ describe('queue', () => {
 		await redis.zAdd('ab:queue', { member: 'player-a', score: oldTime });
 
 		const joinResult = await handleQueueJoin(redis, 'player-a');
-		expect(joinResult.status).toBe('matched');
+		expect(joinResult.status).toBe('waiting');
 
 		const status = await handleQueueStatus(redis, 'player-a');
 		expect(status.status).toBe('matched');
-		expect(status.lobbyCode).toBe(joinResult.lobbyCode);
+		expect(status.lobbyCode).toBeDefined();
 		expect(status.bot).toBe(true);
 	});
 });
