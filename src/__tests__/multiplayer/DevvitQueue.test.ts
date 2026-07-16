@@ -129,7 +129,9 @@ describe('queue', () => {
 		expect(result.lobbyCode).toBeDefined();
 	});
 
-	test('single player gets bot match after timeout', async () => {
+	test('single player is not matched to a bot and stays queued', async () => {
+		// The bot fallback was removed: a lone player just keeps waiting for a
+		// human opponent (Bot Practice is a separate, explicit local game).
 		const oldTime = Date.now() - 35000;
 		await redis.zAdd('ab:queue', { member: 'player-a', score: oldTime });
 
@@ -137,24 +139,10 @@ describe('queue', () => {
 		expect(joinResult.status).toBe('waiting');
 
 		const status = await handleQueueStatus(redis, 'player-a');
-		expect(status.status).toBe('matched');
-		expect(status.lobbyCode).toBeDefined();
-		expect(status.bot).toBe(true);
+		expect(status.status).toBe('waiting');
+		expect(status.lobbyCode).toBeUndefined();
 
-		const meta = JSON.parse((await redis.get(`ab:lobby:${status.lobbyCode}:meta`)) || '{}');
-		expect(meta.bot).toBe(true);
-	});
-
-	test('status endpoint reports bot lobbies', async () => {
-		const oldTime = Date.now() - 35000;
-		await redis.zAdd('ab:queue', { member: 'player-a', score: oldTime });
-
-		const joinResult = await handleQueueJoin(redis, 'player-a');
-		expect(joinResult.status).toBe('waiting');
-
-		const status = await handleQueueStatus(redis, 'player-a');
-		expect(status.status).toBe('matched');
-		expect(status.lobbyCode).toBeDefined();
-		expect(status.bot).toBe(true);
+		const queued = await redis.zRange('ab:queue', 0, -1, { by: 'rank' });
+		expect(queued.find((entry) => entry.member === 'player-a')).toBeDefined();
 	});
 });

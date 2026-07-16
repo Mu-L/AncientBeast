@@ -507,6 +507,18 @@ body {
 			filter: grayscale(100%);
 		}
 	}
+
+	// Green variant of the crimson button, used for "Bot Practice". Uses a
+	// pre-recolored asset (only the red fill is shifted to green; the metallic
+	// chrome frame is preserved) rather than a CSS filter, which would otherwise
+	// tint the chrome as well.
+	.crimson-button.green-button {
+		background-image: url('~assets/interface/small_button_green.png');
+
+		&:focus {
+			text-shadow: 0 0 10px rgb(94, 214, 118);
+		}
+	}
 }
 
 #start-btn {

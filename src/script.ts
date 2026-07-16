@@ -829,7 +829,51 @@ function setupDevvitQueueUi(playerId: string) {
 	}
 
 	attachDevvitQueueButtonHandler(playerId);
+	attachDevvitBotPracticeButtonHandler(playerId);
 	setDevvitQueueButtonState('join');
+}
+
+function attachDevvitBotPracticeButtonHandler(playerId: string) {
+	$j('#devvitBotPracticeButton')
+		.off('click')
+		.on('click', () => {
+			void startDevvitBotPractice(playerId);
+		});
+}
+
+async function startDevvitBotPractice(playerId: string) {
+	const $button = $j('#devvitBotPracticeButton');
+	if ($button.prop('disabled')) {
+		return;
+	}
+
+	// Cancel any in-progress human queue search first so the two flows don't race.
+	if (devvitQueueActive) {
+		await leaveDevvitQueue(playerId);
+	}
+
+	$button.val('Loading...').prop('disabled', true).toggleClass('disabled', true);
+	$j('#devvitQueueButton').prop('disabled', true).toggleClass('disabled', true);
+	$j('#devvitQueueStatus').text('Starting bot practice...');
+
+	// Bot Practice is a purely local (hotseat) 1v1: the human is player 0 and the
+	// engine auto-assigns every other player to the client-side BotController
+	// (see game.ts — `players.includes(id) ? 'human' : 'bot'`). No server lobby or
+	// matchmaking is involved, so there's nothing to poll and nothing to navigate to.
+	try {
+		G.multiplayer = false;
+		const config = {
+			...getGameConfig(),
+			gameMode: 2,
+			players: [0],
+		};
+		G.loadGame(config);
+	} catch (error) {
+		console.error('Bot practice error:', error);
+		$j('#devvitQueueStatus').text('Could not start bot practice, try again!');
+		$button.val('Bot Practice').prop('disabled', false).toggleClass('disabled', false);
+		$j('#devvitQueueButton').prop('disabled', false).toggleClass('disabled', false);
+	}
 }
 
 function attachDevvitQueueButtonHandler(playerId: string) {

@@ -33,7 +33,6 @@ export const ACTIVE_MATCHES_KEY = 'ab:activeMatches';
 const RECENT_TTL_SECONDS = 86400;
 const RECENT_RETRY_MS = 3000;
 const MATCHED_TTL_SECONDS = 300;
-const QUEUE_TIMEOUT_MS = 30000;
 
 function matchedKey(playerId: string): string {
 	return `ab:matched:${playerId}`;
@@ -90,74 +89,55 @@ async function isRecentMatch(redis: RedisLike, playerA: string, playerB: string)
 
 export async function tryMatchQueue(
 	redis: RedisLike,
-	options?: { allowBotFallback?: boolean },
-): Promise<{ matched: boolean; lobbyCode?: string; bot?: boolean }> {
+): Promise<{ matched: boolean; lobbyCode?: string }> {
 	const players = await getQueuePlayers(redis);
 
-	if (players.length < 2 && !options?.allowBotFallback) {
+	if (players.length < 2) {
 		return { matched: false };
 	}
 
 	const now = Date.now();
 
-	// Try to find a human match first
-	if (players.length >= 2) {
-		const sorted = [...players].sort((a, b) => a.queuedAt - b.queuedAt);
+	const sorted = [...players].sort((a, b) => a.queuedAt - b.queuedAt);
 
-		for (const caller of sorted) {
-			const candidates = players.filter((p) => p.playerId !== caller.playerId);
-			let bestNonRecent: string | undefined;
-			let bestRecent: string | undefined;
+	for (const caller of sorted) {
+		const candidates = players.filter((p) => p.playerId !== caller.playerId);
+		let bestNonRecent: string | undefined;
+		let bestRecent: string | undefined;
 
-			for (const candidate of candidates) {
-				if (await isRecentMatch(redis, caller.playerId, candidate.playerId)) {
-					if (!bestRecent) {
-						bestRecent = candidate.playerId;
-					}
-				} else {
-					bestNonRecent = candidate.playerId;
-					break;
+		for (const candidate of candidates) {
+			if (await isRecentMatch(redis, caller.playerId, candidate.playerId)) {
+				if (!bestRecent) {
+					bestRecent = candidate.playerId;
 				}
-			}
-
-			let chosen: string | undefined;
-			if (bestNonRecent) {
-				chosen = bestNonRecent;
-			} else if (bestRecent && now - caller.queuedAt >= RECENT_RETRY_MS) {
-				chosen = bestRecent;
-			}
-
-			if (chosen) {
-				await redis.zRem(QUEUE_KEY, [caller.playerId, chosen]);
-
-				const lobbyCode = await createLobby(redis);
-
-				const rKey = recentKey(caller.playerId, chosen);
-				await redis.set(rKey, '1');
-				await redis.expire(rKey, RECENT_TTL_SECONDS);
-
-				await redis.set(matchedKey(caller.playerId), lobbyCode);
-				await redis.expire(matchedKey(caller.playerId), MATCHED_TTL_SECONDS);
-				await redis.set(matchedKey(chosen), lobbyCode);
-				await redis.expire(matchedKey(chosen), MATCHED_TTL_SECONDS);
-
-				return { matched: true, lobbyCode };
+			} else {
+				bestNonRecent = candidate.playerId;
+				break;
 			}
 		}
-	}
 
-	// Fallback to bot if only one player waiting and they've been waiting long enough
-	if (options?.allowBotFallback && players.length === 1) {
-		const caller = players[0];
-		if (now - caller.queuedAt >= QUEUE_TIMEOUT_MS) {
-			await redis.zRem(QUEUE_KEY, [caller.playerId]);
+		let chosen: string | undefined;
+		if (bestNonRecent) {
+			chosen = bestNonRecent;
+		} else if (bestRecent && now - caller.queuedAt >= RECENT_RETRY_MS) {
+			chosen = bestRecent;
+		}
 
-			const lobbyCode = await createLobby(redis, { bot: true });
+		if (chosen) {
+			await redis.zRem(QUEUE_KEY, [caller.playerId, chosen]);
+
+			const lobbyCode = await createLobby(redis);
+
+			const rKey = recentKey(caller.playerId, chosen);
+			await redis.set(rKey, '1');
+			await redis.expire(rKey, RECENT_TTL_SECONDS);
 
 			await redis.set(matchedKey(caller.playerId), lobbyCode);
 			await redis.expire(matchedKey(caller.playerId), MATCHED_TTL_SECONDS);
+			await redis.set(matchedKey(chosen), lobbyCode);
+			await redis.expire(matchedKey(chosen), MATCHED_TTL_SECONDS);
 
-			return { matched: true, lobbyCode, bot: true };
+			return { matched: true, lobbyCode };
 		}
 	}
 
@@ -195,11 +175,11 @@ export async function handleQueueStatus(
 	let lobbyCode = await redis.get(matchedKey(playerId));
 
 	if (!lobbyCode) {
-		// Nothing else re-invokes matchmaking after the initial join, so the bot-fallback
-		// (which only kicks in once QUEUE_TIMEOUT_MS has elapsed) would otherwise never
-		// trigger. The client polls this endpoint every second while waiting, so retry
-		// matchmaking here too, each time it's called.
-		await tryMatchQueue(redis, { allowBotFallback: true });
+		// Nothing else re-invokes matchmaking after the initial join, so retry it here
+		// while the client polls. If no suitable opponent is waiting, the player simply
+		// stays in the queue until one shows up (or they cancel) — there is no bot
+		// fallback; Bot Practice is a separate, explicit local game.
+		await tryMatchQueue(redis);
 		lobbyCode = await redis.get(matchedKey(playerId));
 	}
 

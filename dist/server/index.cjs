@@ -95594,7 +95594,6 @@ var ACTIVE_MATCHES_KEY = "ab:activeMatches";
 var RECENT_TTL_SECONDS = 86400;
 var RECENT_RETRY_MS = 3e3;
 var MATCHED_TTL_SECONDS = 300;
-var QUEUE_TIMEOUT_MS = 3e4;
 function matchedKey(playerId) {
   return `ab:matched:${playerId}`;
 }
@@ -95638,76 +95637,69 @@ async function isRecentMatch(redis2, playerA, playerB) {
   const key = recentKey(playerA, playerB);
   return await redis2.exists(key) > 0;
 }
-async function tryMatchQueue(redis2, options) {
+async function tryMatchQueue(redis2) {
   const players = await getQueuePlayers(redis2);
-  if (players.length < 2 && !options?.allowBotFallback) {
+  if (players.length < 2) {
     return { matched: false };
   }
   const now = Date.now();
-  if (players.length >= 2) {
-    const sorted = [...players].sort((a, b) => a.queuedAt - b.queuedAt);
-    for (const caller of sorted) {
-      const candidates = players.filter((p) => p.playerId !== caller.playerId);
-      let bestNonRecent;
-      let bestRecent;
-      for (const candidate of candidates) {
-        if (await isRecentMatch(redis2, caller.playerId, candidate.playerId)) {
-          if (!bestRecent) {
-            bestRecent = candidate.playerId;
-          }
-        } else {
-          bestNonRecent = candidate.playerId;
-          break;
+  const sorted = [...players].sort((a, b) => a.queuedAt - b.queuedAt);
+  for (const caller of sorted) {
+    const candidates = players.filter((p) => p.playerId !== caller.playerId);
+    let bestNonRecent;
+    let bestRecent;
+    for (const candidate of candidates) {
+      if (await isRecentMatch(redis2, caller.playerId, candidate.playerId)) {
+        if (!bestRecent) {
+          bestRecent = candidate.playerId;
         }
-      }
-      let chosen;
-      if (bestNonRecent) {
-        chosen = bestNonRecent;
-      } else if (bestRecent && now - caller.queuedAt >= RECENT_RETRY_MS) {
-        chosen = bestRecent;
-      }
-      if (chosen) {
-        await redis2.zRem(QUEUE_KEY, [caller.playerId, chosen]);
-        const lobbyCode = await createLobby(redis2);
-        const rKey = recentKey(caller.playerId, chosen);
-        await redis2.set(rKey, "1");
-        await redis2.expire(rKey, RECENT_TTL_SECONDS);
-        await redis2.set(matchedKey(caller.playerId), lobbyCode);
-        await redis2.expire(matchedKey(caller.playerId), MATCHED_TTL_SECONDS);
-        await redis2.set(matchedKey(chosen), lobbyCode);
-        await redis2.expire(matchedKey(chosen), MATCHED_TTL_SECONDS);
-        return { matched: true, lobbyCode };
+      } else {
+        bestNonRecent = candidate.playerId;
+        break;
       }
     }
-  }
-  if (options?.allowBotFallback && players.length === 1) {
-    const caller = players[0];
-    if (now - caller.queuedAt >= QUEUE_TIMEOUT_MS) {
-      await redis2.zRem(QUEUE_KEY, [caller.playerId]);
-      const lobbyCode = await createLobby(redis2, { bot: true });
+    let chosen;
+    if (bestNonRecent) {
+      chosen = bestNonRecent;
+    } else if (bestRecent && now - caller.queuedAt >= RECENT_RETRY_MS) {
+      chosen = bestRecent;
+    }
+    if (chosen) {
+      await redis2.zRem(QUEUE_KEY, [caller.playerId, chosen]);
+      const lobbyCode = await createLobby(redis2);
+      const rKey = recentKey(caller.playerId, chosen);
+      await redis2.set(rKey, "1");
+      await redis2.expire(rKey, RECENT_TTL_SECONDS);
       await redis2.set(matchedKey(caller.playerId), lobbyCode);
       await redis2.expire(matchedKey(caller.playerId), MATCHED_TTL_SECONDS);
-      return { matched: true, lobbyCode, bot: true };
+      await redis2.set(matchedKey(chosen), lobbyCode);
+      await redis2.expire(matchedKey(chosen), MATCHED_TTL_SECONDS);
+      return { matched: true, lobbyCode };
     }
   }
   return { matched: false };
 }
 async function handleQueueJoin(redis2, playerId) {
+  const existingMatch = await redis2.get(matchedKey(playerId));
+  if (existingMatch) {
+    const meta = await redis2.get(`ab:lobby:${existingMatch}:meta`);
+    if (meta) {
+      const parsed = JSON.parse(meta);
+      return { status: "matched", lobbyCode: existingMatch, bot: Boolean(parsed.bot) };
+    }
+    await redis2.del(matchedKey(playerId));
+  }
   const existing = await redis2.zRange(QUEUE_KEY, 0, -1, { by: "rank" });
   const alreadyQueued = existing.some((entry) => entry.member === playerId);
   if (!alreadyQueued) {
     await redis2.zAdd(QUEUE_KEY, { member: playerId, score: Date.now() });
-  }
-  const result = await tryMatchQueue(redis2, { allowBotFallback: true });
-  if (result.matched && result.lobbyCode) {
-    return { status: "matched", lobbyCode: result.lobbyCode, bot: result.bot };
   }
   return { status: "waiting" };
 }
 async function handleQueueStatus(redis2, playerId) {
   let lobbyCode = await redis2.get(matchedKey(playerId));
   if (!lobbyCode) {
-    await tryMatchQueue(redis2, { allowBotFallback: true });
+    await tryMatchQueue(redis2);
     lobbyCode = await redis2.get(matchedKey(playerId));
   }
   if (lobbyCode) {
