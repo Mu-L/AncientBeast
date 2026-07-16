@@ -8,10 +8,14 @@
 			body {
 				margin: 0;
 				height: 100vh;
-				background: #0f0f0f;
+				background-color: #0f0f0f;
+				background-image: url('<%= require('assets/interface/splash.jpg') %>');
+				background-size: cover;
+				background-position: center;
+				background-repeat: no-repeat;
 				color: #ffffff;
 				display: flex;
-				align-items: center;
+				align-items: flex-end;
 				justify-content: center;
 				font-family:
 					-apple-system,
@@ -21,6 +25,13 @@
 					Helvetica,
 					Arial,
 					sans-serif;
+			}
+			body p {
+				margin-bottom: 2rem;
+				padding: 0.5rem 1rem;
+				background: rgba(0, 0, 0, 0.5);
+				border-radius: 0.5rem;
+				text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 			}
 		</style>
 	</head>
