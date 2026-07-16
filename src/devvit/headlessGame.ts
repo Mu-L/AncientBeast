@@ -354,29 +354,6 @@ class SimSignal {
 	}
 }
 
-// ─── jQuery mock (chainable no-op) ───────────────────────────────────────────
-
-function makeJQueryChain(): any {
-	const chain: any = new Proxy(
-		function _jq() {
-			return chain;
-		},
-		{
-			get(_target, prop) {
-				if (prop === 'then' || prop === Symbol.toPrimitive) return undefined;
-				if (prop === 'length') return 0;
-				if (prop === 'width' || prop === 'height') return () => 1920;
-				if (prop === 'offset') return () => ({ top: 0, left: 0 });
-				return () => chain;
-			},
-			apply() {
-				return chain;
-			},
-		},
-	);
-	return chain;
-}
-
 // ─── Animations mock (completes movement synchronously) ─────────────────────
 
 class MockAnimations {

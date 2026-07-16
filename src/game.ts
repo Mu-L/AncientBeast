@@ -25,7 +25,8 @@ import type {
 	LobbyState,
 } from './multiplayer';
 import type { AuthoritativeState, Intent } from './multiplayer/authoritative';
-import { getVisibilityAwareDelay, sleep } from './utility/time';
+import type { AbilityTarget } from './multiplayer/types';
+import { getVisibilityAwareDelay } from './utility/time';
 import { DEBUG_DISABLE_GAME_STATUS_CONSOLE_LOG, DEBUG_DISABLE_MUSIC } from './debug';
 import { Point, configure as configurePointFacade } from './utility/pointfacade';
 import { pretty as version } from './utility/version';
@@ -925,10 +926,10 @@ export default class Game {
 			const intent = message.intent;
 			switch (intent.kind) {
 				case 'skip':
-					this.action({ action: 'skip' }, { callback() {} });
+					this.action({ action: 'skip' }, {});
 					break;
 				case 'delay':
-					this.action({ action: 'delay' }, { callback() {} });
+					this.action({ action: 'delay' }, {});
 					break;
 				case 'move':
 					this.action(
@@ -942,8 +943,13 @@ export default class Game {
 					break;
 				case 'ability':
 					this.action(
-						{ action: 'ability', id: intent.id, target: intent.target, args: intent.args },
-						{ callback() {} },
+						{
+							action: 'ability',
+							id: intent.id,
+							target: intent.target,
+							args: intent.args,
+						},
+						{},
 					);
 					break;
 			}
@@ -1100,17 +1106,7 @@ export default class Game {
 		});
 	}
 
-	sendMultiplayerAbility(params: {
-		target: {
-			type: string;
-			x?: number;
-			y?: number;
-			crea?: number;
-			array?: Array<{ x: number; y: number }>;
-		};
-		id: number;
-		args: unknown[];
-	}): void {
+	sendMultiplayerAbility(params: { target: AbilityTarget; id: number; args: unknown[] }): void {
 		if (!this.multiplayer || !this.lobby || !this.activeCreature) {
 			return;
 		}
@@ -1124,7 +1120,7 @@ export default class Game {
 			this.sendIntent({
 				kind: 'ability',
 				id: params.id,
-				target: params.target as any,
+				target: params.target,
 				args: params.args,
 			} as Intent);
 			return;
@@ -1132,7 +1128,7 @@ export default class Game {
 		this.lobby.sendAction({
 			type: 'action-ability',
 			id: params.id,
-			target: params.target as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+			target: params.target,
 			args: params.args,
 			playerId: this.lobby.getLocalPlayer()?.playerId || '',
 			creatureId: this.activeCreature.id,
@@ -1159,7 +1155,7 @@ export default class Game {
 		// which are stricter than the serializable snapshot. Cast to `any` so the
 		// authoritative state can drive the live game without fighting internal
 		// types; the fields we set are the canonical ones `serializeState` reads.
-		const g = this as any;
+		const g = this as any; // eslint-disable-line @typescript-eslint/no-explicit-any
 		for (const snap of state.creatures) {
 			const creature = g.creatures[snap.id];
 			if (!creature) {
