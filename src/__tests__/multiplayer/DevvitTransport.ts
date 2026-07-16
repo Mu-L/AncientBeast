@@ -523,6 +523,91 @@ describe('DevvitLobbyProvider', () => {
 		);
 	});
 
+	test('applies self-originated intent messages (authoritative mode does not apply locally before sending)', () => {
+		const handler = jest.fn();
+		provider.onGameMessage(handler);
+
+		const intentMessage: GameMessage = {
+			type: 'intent',
+			intent: { kind: 'move', target: { x: 3, y: 4 } },
+			playerId: 'player-1',
+		};
+
+		// Echoed back from the server, originated by this same client. In
+		// authoritative mode the acting client never applied the intent locally
+		// before sending, so it must apply the echoed copy to keep both sides
+		// in sync.
+		(
+			provider as unknown as { handleTransportMessage: (m: GameMessage, p: string) => void }
+		).handleTransportMessage(intentMessage, 'player-1');
+
+		expect(handler).toHaveBeenCalledWith(intentMessage);
+	});
+
+	test('lobby-joined for another peer does not overwrite local player index', () => {
+		(provider as unknown as { state: unknown }).state = {
+			code: 'ABC1',
+			host: 'player-1',
+			hostPeerId: 'player-1',
+			players: [{ playerId: 'player-1', peerId: 'player-1', name: 'player-1', playerIndex: 0 }],
+			config: {
+				gameMode: 2,
+				creaLimitNbr: 3,
+				unitDrops: 1,
+				abilityUpgrades: 3,
+				plasma_amount: 30,
+				turnTimePool: -1,
+				timePool: -1,
+				background_image: 'default',
+			},
+			status: 'waiting',
+		};
+
+		const lobbyJoinedMessage: GameMessage = {
+			type: 'lobby-joined',
+			player: { playerId: 'player-2', peerId: 'player-2', name: 'player-2', playerIndex: 1 },
+		};
+
+		(
+			provider as unknown as { handleTransportMessage: (m: GameMessage, p: string) => void }
+		).handleTransportMessage(lobbyJoinedMessage, 'player-2');
+
+		const localPlayer = provider.getLocalPlayer();
+		expect(localPlayer?.playerIndex).toBe(0);
+	});
+
+	test('lobby-joined for self updates local player index', () => {
+		(provider as unknown as { state: unknown }).state = {
+			code: 'ABC1',
+			host: 'player-1',
+			hostPeerId: 'player-1',
+			players: [{ playerId: 'player-1', peerId: 'player-1', name: 'player-1', playerIndex: -1 }],
+			config: {
+				gameMode: 2,
+				creaLimitNbr: 3,
+				unitDrops: 1,
+				abilityUpgrades: 3,
+				plasma_amount: 30,
+				turnTimePool: -1,
+				timePool: -1,
+				background_image: 'default',
+			},
+			status: 'waiting',
+		};
+
+		const lobbyJoinedMessage: GameMessage = {
+			type: 'lobby-joined',
+			player: { playerId: 'player-1', peerId: 'player-1', name: 'player-1', playerIndex: 0 },
+		};
+
+		(
+			provider as unknown as { handleTransportMessage: (m: GameMessage, p: string) => void }
+		).handleTransportMessage(lobbyJoinedMessage, 'player-1');
+
+		const localPlayer = provider.getLocalPlayer();
+		expect(localPlayer?.playerIndex).toBe(0);
+	});
+
 	test('host answers sync requests with a snapshot', () => {
 		(provider as unknown as { isHostFlag: boolean }).isHostFlag = true;
 		(provider as unknown as { state: unknown }).state = {

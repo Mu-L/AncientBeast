@@ -217,15 +217,15 @@ export class DevvitLobbyProvider implements INetworkBackend {
 		}
 
 		// In Devvit mode the server relays every message to ALL clients, including the
-		// sender. The acting client already applies action messages locally (e.g.
-		// Ability.animation -> animation2 -> activate -> player.summon for materialize),
-		// so re-applying its own echoed action would duplicate the effect (stacked units,
+		// sender. Relay-mode action messages (action-end, action-move, action-ability)
+		// are already applied locally by the acting client before they are sent, so
+		// re-applying their own echoed action would duplicate the effect (stacked units,
 		// double turn-activation, etc.). Peer mode avoids this via sendExcept(peerId,...).
-		// Mirror that here: ignore action messages that originated from this client.
-		if (
-			peerId === this.transport.getMyId() &&
-			(isSelfAppliedActionMessage(message) || message.type === 'intent')
-		) {
+		// Authoritative `intent` messages are NOT applied locally before sending — they
+		// are sent to the server for ordering and must be applied by every client when
+		// the echoed intent arrives, otherwise the acting client's game state never
+		// advances and both players become desynchronized.
+		if (peerId === this.transport.getMyId() && isSelfAppliedActionMessage(message)) {
 			return;
 		}
 
@@ -474,6 +474,14 @@ export class DevvitLobbyProvider implements INetworkBackend {
 
 	private handleLobbyJoined(player: LobbyPlayer, _peerId: PeerId): void {
 		const myPeerId = this.transport.getMyId();
+		// The host broadcasts `lobby-joined` with the newly joined peer's info so that
+		// peer learns its server-assigned playerIndex. All other clients (including the
+		// host) already know this from the preceding `player-joined` message; processing
+		// it as their own would overwrite their local player with the wrong index.
+		if (player.peerId !== myPeerId) {
+			return;
+		}
+
 		const localPlayer: LobbyPlayer = {
 			...player,
 			playerId: player.playerId || myPeerId,
@@ -482,7 +490,7 @@ export class DevvitLobbyProvider implements INetworkBackend {
 		};
 
 		const players = this.state.players.filter(
-			(player) => player.playerIndex !== localPlayer.playerIndex,
+			(player) => player.peerId !== myPeerId && player.playerId !== myPeerId,
 		);
 		players.push(localPlayer);
 		players.sort((a, b) => a.playerIndex - b.playerIndex);

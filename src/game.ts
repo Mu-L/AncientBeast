@@ -9,6 +9,7 @@ import { getUrl, use as assetsUse, soundPaths } from './assets';
 import { Player, PlayerColor, PlayerID, getDarkPriestAvatarUrl } from './player';
 import { UI } from './ui/interface';
 import { Creature, CreatureHintType } from './creature';
+import { refreshPlasmaRenderScales } from './plasma-field';
 import { unitData } from './data/units';
 import 'pixi';
 import 'p2';
@@ -865,6 +866,7 @@ export default class Game {
 			if (this.Phaser && this.Phaser.scale) {
 				this.Phaser.scale.refresh();
 			}
+			refreshPlasmaRenderScales();
 		});
 
 		this.soundsys.playMusic();
@@ -924,7 +926,11 @@ export default class Game {
 				case 'move':
 					this.action(
 						{ action: 'move', target: intent.target, path: intent.path },
-						{ callback() {} },
+						{
+							callback: () => {
+								this.activeCreature?.queryMove();
+							},
+						},
 					);
 					break;
 				case 'ability':
@@ -1307,7 +1313,14 @@ export default class Game {
 				const localPlayerIndex = this.lobby?.getLocalPlayer()?.playerIndex;
 				const wasLocalPlayersTurn =
 					!previousActiveCreature || previousActiveCreature.player.id === localPlayerIndex;
-				if (this.multiplayer && this.playersReady && this.lobby && !remote && wasLocalPlayersTurn) {
+				if (
+					this.multiplayer &&
+					this.playersReady &&
+					this.lobby &&
+					!remote &&
+					wasLocalPlayersTurn &&
+					!this.authoritative
+				) {
 					this.lobby.sendAction({
 						type: 'turn-update',
 						playerId: this.lobby.getLocalPlayer()?.playerId || '',
@@ -1414,14 +1427,14 @@ export default class Game {
 		if (!remote && this.multiplayer && this.lobby) {
 			if (this.authoritative) {
 				this.sendIntent({ kind: 'skip' } as Intent);
-			} else {
-				this.lobby.sendAction({
-					type: 'action-end',
-					action: 'skip',
-					playerId: this.lobby.getLocalPlayer()?.playerId || '',
-					creatureId: this.activeCreature?.id || 0,
-				});
+				return;
 			}
+			this.lobby.sendAction({
+				type: 'action-end',
+				action: 'skip',
+				playerId: this.lobby.getLocalPlayer()?.playerId || '',
+				creatureId: this.activeCreature?.id || 0,
+			});
 		}
 
 		o = $j.extend(
@@ -1498,14 +1511,14 @@ export default class Game {
 		if (!remote && this.multiplayer && this.lobby) {
 			if (this.authoritative) {
 				this.sendIntent({ kind: 'delay' } as Intent);
-			} else {
-				this.lobby.sendAction({
-					type: 'action-end',
-					action: 'delay',
-					playerId: this.lobby.getLocalPlayer()?.playerId || '',
-					creatureId: this.activeCreature?.id || 0,
-				});
+				return;
 			}
+			this.lobby.sendAction({
+				type: 'action-end',
+				action: 'delay',
+				playerId: this.lobby.getLocalPlayer()?.playerId || '',
+				creatureId: this.activeCreature?.id || 0,
+			});
 		}
 
 		o = $j.extend(
