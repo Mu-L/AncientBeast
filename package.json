@@ -102,7 +102,7 @@
     "jest": "echo '🧪 Running Jest unit tests' && jest",
     "start:jest": "echo '👀 Running Jest in interactive watch mode (re-runs on file change)' && jest --watch",
     "simulate": "echo '🎮 Running headless game simulation tests (sequential)' && jest --config jest.simulation.config.js --runInBand",
-    "svgo:stats": "echo '🧼 Stripping Devvit-rejected metadata from SVG icons' && node scripts/optimize-svgs.mjs assets/stats assets/icons assets/autoload/interface",
+    "devvit:svgo": "echo '🧼 Stripping Devvit-rejected metadata from SVG icons' && node scripts/optimize-svgs.mjs assets/stats assets/icons assets/autoload/interface",
     "devvit:playtest": "echo '🎮 Building + starting Devvit playtest' && devvit playtest",
     "devvit:upload": "echo '📤 Building + uploading to Devvit' && devvit upload"
   },
