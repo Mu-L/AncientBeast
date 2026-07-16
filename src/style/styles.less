@@ -3713,9 +3713,12 @@ body.devvit-mode .button#fullscreen {
 	}
 }
 
-/* Always-visible build-version badge (see renderBuildBadge in script.ts). Tells
-   testers which deployed build they're on; collapsed into a corner and kept
-   unobtrusive so it never covers gameplay. */
+/* Build-version badge (see renderBuildBadge in script.ts). Tells testers which
+   deployed build they're on; collapsed into a corner and kept unobtrusive so
+   it never covers gameplay. During the pre-match screen the badge is always
+   visible and (for Devvit builds) stacks the game version above the Devvit
+   experience version. During gameplay it is hidden by default and pops back in
+   when the user hovers a round marker in the queue. */
 .build-badge {
 	position: fixed;
 	right: 6px;
@@ -3729,6 +3732,30 @@ body.devvit-mode .button#fullscreen {
 	letter-spacing: 0.3px;
 	pointer-events: none;
 	user-select: none;
+	opacity: 0.7;
+	text-align: right;
+	transition: opacity 0.15s ease-in-out;
+}
+
+/* Devvit builds: two stacked rows (game version on top, devvit version below)
+   instead of the default "vX · devvit Y" single-line layout. */
+.build-badge.build-badge--two-line {
+	line-height: 1.15;
+}
+
+.build-badge__devvit {
+	font-size: 10px;
+	opacity: 0.85;
+}
+
+/* During gameplay the badge is hidden by default… */
+body.in-game .build-badge {
+	opacity: 0;
+}
+
+/* …and revealed on round-marker hover. The class is toggled by the
+   `onTurnEndMouseEnter` / `onTurnEndMouseLeave` handlers in ui/interface.ts. */
+body.in-game .build-badge.build-badge--hover-visible {
 	opacity: 0.7;
 }
 

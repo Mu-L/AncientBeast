@@ -750,6 +750,11 @@ export default class Game {
 
 		// Remove loading screen
 		$j('#matchMaking').hide();
+		// Marks the body so the build-version badge in the lower-right corner
+		// hides during gameplay (it pops back in on round-marker hover — see
+		// `body.in-game .build-badge` in styles.less and the hover handler in
+		// ui/interface.ts).
+		$j('body').addClass('in-game');
 
 		this.players = [];
 		// Drop any leftover creatures/traps/drops/effects from a previous match.

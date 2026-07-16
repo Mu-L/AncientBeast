@@ -18,6 +18,11 @@ export function getDevvitAppVersion(): string | undefined {
 	}
 }
 
+/** Game build version (always populated), e.g. "v0.6.0". */
+export function getGameVersion(): string {
+	return gameVersion;
+}
+
 /**
  * Human-readable build label, e.g. "v0.6.0" or "v0.6.0 · devvit 0.0.51".
  * Surfaced in the client so testers can tell an old deployed build from a new

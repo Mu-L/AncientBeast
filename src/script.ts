@@ -18,7 +18,7 @@ import {
 	DEBUG_GAME_LOG,
 	DEBUG_HAS_GAME_LOG,
 } from './debug';
-import { getClientVersionLabel } from './utility/clientVersion';
+import { getDevvitAppVersion, getGameVersion } from './utility/clientVersion';
 
 if (DEBUG && 'serviceWorker' in navigator) {
 	navigator.serviceWorker
@@ -803,17 +803,30 @@ function stopDevvitQueueCountdown() {
 }
 
 /**
- * Render a small always-visible build-version badge in the corner. Lets testers
+ * Render a small build-version badge in the lower-right corner. Lets testers
  * tell an old deployed Devvit build from a new one at a glance (Devvit keeps
  * several experience versions live after upload, so "looks broken" can just
  * mean "you're on 0.0.51, not the fix").
+ *
+ * In the pre-match screen the badge is always visible and stacks the game
+ * version on top of the Devvit experience version. During gameplay it is
+ * hidden by default and re-appears (in the same lower-right spot) when the
+ * user hovers a round marker in the queue — see `body.in-game .build-badge`
+ * in styles.less and the hover handler in ui/interface.ts. Non-Devvit builds
+ * only see the single game line.
  */
 function renderBuildBadge(): void {
+	const devvit = getDevvitAppVersion();
+	if (!devvit) return;
+
 	const existing = document.getElementById('buildBadge');
 	const badge = existing ?? document.createElement('div');
 	badge.id = 'buildBadge';
 	badge.className = 'build-badge';
-	badge.textContent = getClientVersionLabel();
+	badge.classList.add('build-badge--two-line');
+	badge.innerHTML =
+		`<div class="build-badge__game">${getGameVersion()}</div>` +
+		`<div class="build-badge__devvit">r${devvit}</div>`;
 	if (!existing) {
 		document.body.appendChild(badge);
 	}
