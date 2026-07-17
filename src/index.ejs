@@ -31,8 +31,7 @@
 		</style>
 	</head>
 	<body id="AncientBeast">
-		<div class="scrim loading"></div>
-		<div id="arcade-logo" style="display:none; position:fixed; top:0; left:0; right:0; height:35px; z-index:20; pointer-events:none; background:rgba(0,0,0,0.3); align-items:center; justify-content:center;">
+		<div id="portrait-logo" style="display:none; position:fixed; top:0; left:0; right:0; height:35px; z-index:20; pointer-events:none; align-items:center; justify-content:center;">
 			<img src="<%= require('assets/interface/AncientBeast.png') %>" height="28" loading="lazy" style="opacity:0.9;">
 		</div>
 		<div id="matchMaking">
@@ -98,13 +97,6 @@
 		</div>
 		<div id="banner"></div>
 		<div id="combatwrapper">
-		</div>
-		<div id="orientation-message">
-			<div class="framed-modal__return">
-				<div class="close-button"></div>
-			</div>
-			<div class="rotate-icon"></div>
-			<p>Please rotate your device to<br>landscape mode</p>
 		</div>
 		<% if (htmlWebpackPlugin.options.enableServiceWorker) { %>
 			<%= require('./templates/service_worker.html').default %>

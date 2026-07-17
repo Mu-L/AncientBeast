@@ -40,7 +40,7 @@ export class Chat {
 		this.$chat = $j('#chat');
 		this.$content = $j('#chatcontent');
 		this.$chat.on('click', () => {
-			if (!$j('body').hasClass('arcade-mode')) {
+			if (!$j('body').hasClass('portrait-mode')) {
 				this.toggle();
 			}
 		});

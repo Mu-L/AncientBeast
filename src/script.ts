@@ -67,27 +67,27 @@ $j(() => {
 
 	renderBuildBadge();
 
-	function isArcadeViewport() {
-		return window.innerWidth <= 600 && window.innerHeight <= 700;
+	function isPortraitViewport() {
+		return window.matchMedia('(orientation: portrait) and (max-width: 600px)').matches;
 	}
 
-	function applyArcadeMode() {
-		const wasArcade = $j('body').hasClass('arcade-mode');
-		const isArcade = isArcadeViewport();
+	function applyPortraitMode() {
+		const wasPortrait = $j('body').hasClass('portrait-mode');
+		const isPortrait = isPortraitViewport();
 
-		if (isArcade) {
-			$j('body').addClass('arcade-mode');
-			$j('#arcade-logo').show();
+		if (isPortrait) {
+			$j('body').addClass('portrait-mode');
+			$j('#portrait-logo').show();
 		} else {
-			$j('body').removeClass('arcade-mode');
-			$j('#arcade-logo').hide();
+			$j('body').removeClass('portrait-mode');
+			$j('#portrait-logo').hide();
 			$j('#combatwrapper').show();
 			$j('#bottompanel').show();
 		}
 
 		if (G.Phaser && G.Phaser.scale) {
-			G.Phaser.scale.parentIsWindow = !isArcade;
-			G.Phaser.scale.pageAlignVertically = !isArcade;
+			G.Phaser.scale.parentIsWindow = !isPortrait;
+			G.Phaser.scale.pageAlignVertically = !isPortrait;
 			G.Phaser.scale.refresh();
 			window.setTimeout(() => {
 				if (G.Phaser && G.Phaser.scale) {
@@ -101,7 +101,7 @@ $j(() => {
 			}, 250);
 		}
 
-		if (wasArcade && !isArcade && G.UI) {
+		if (wasPortrait && !isPortrait && G.UI) {
 			G.UI.updateQueueDisplay();
 		}
 
@@ -112,11 +112,11 @@ $j(() => {
 		}
 	}
 
-	applyArcadeMode();
-	window.addEventListener('resize', applyArcadeMode);
+	applyPortraitMode();
+	window.addEventListener('resize', applyPortraitMode);
 
 	if (typeof ResizeObserver !== 'undefined') {
-		const resizeObserver = new ResizeObserver(() => applyArcadeMode());
+		const resizeObserver = new ResizeObserver(() => applyPortraitMode());
 		resizeObserver.observe(document.body);
 	}
 
@@ -157,9 +157,6 @@ $j(() => {
 	}
 
 	if (effectiveNetMode === 'devvit') {
-		// The "please rotate your device" prompt can't reliably be escaped inside Reddit's
-		// webview (fullscreen/orientation APIs are unreliable there), so just disable it
-		// entirely for Devvit — see #orientation-message.devvit-mode override in styles.less.
 		$j('body').addClass('devvit-mode');
 
 		if (devvitLaunch) {
@@ -665,10 +662,6 @@ $j(() => {
 
 	$j('#gameTitle').on('click', () => {
 		beastAudio.playBeast();
-	});
-
-	$j('#orientation-message .framed-modal__return').on('click', async () => {
-		$j('#orientation-message').hide();
 	});
 
 	const focusGameWindow = () => {
