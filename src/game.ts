@@ -681,9 +681,9 @@ export default class Game {
 		}
 
 		// Phaser
-		this.Phaser.scale.parentIsWindow = true;
+		this.Phaser.scale.parentIsWindow = window.innerWidth > 600 || window.innerHeight > 700;
 		this.Phaser.scale.pageAlignHorizontally = true;
-		this.Phaser.scale.pageAlignVertically = true;
+		this.Phaser.scale.pageAlignVertically = window.innerWidth > 600 || window.innerHeight > 700;
 		this.Phaser.scale.scaleMode = Phaser.ScaleManager.SHOW_ALL;
 		this.Phaser.scale.fullScreenScaleMode = Phaser.ScaleManager.SHOW_ALL;
 		this.Phaser.scale.refresh();

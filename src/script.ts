@@ -67,6 +67,59 @@ $j(() => {
 
 	renderBuildBadge();
 
+	function isArcadeViewport() {
+		return window.innerWidth <= 600 && window.innerHeight <= 700;
+	}
+
+	function applyArcadeMode() {
+		const wasArcade = $j('body').hasClass('arcade-mode');
+		const isArcade = isArcadeViewport();
+
+		if (isArcade) {
+			$j('body').addClass('arcade-mode');
+			$j('#arcade-logo').show();
+		} else {
+			$j('body').removeClass('arcade-mode');
+			$j('#arcade-logo').hide();
+			$j('#combatwrapper').show();
+			$j('#bottompanel').show();
+		}
+
+		if (G.Phaser && G.Phaser.scale) {
+			G.Phaser.scale.parentIsWindow = !isArcade;
+			G.Phaser.scale.pageAlignVertically = !isArcade;
+			G.Phaser.scale.refresh();
+			window.setTimeout(() => {
+				if (G.Phaser && G.Phaser.scale) {
+					G.Phaser.scale.refresh();
+				}
+			}, 100);
+			window.setTimeout(() => {
+				if (G.Phaser && G.Phaser.scale) {
+					window.dispatchEvent(new Event('resize'));
+				}
+			}, 250);
+		}
+
+		if (wasArcade && !isArcade && G.UI) {
+			G.UI.updateQueueDisplay();
+		}
+
+		if (G.UI && G.UI.dashopen) {
+			setTimeout(() => {
+				G.UI.resizeDash();
+			}, 300);
+		}
+	}
+
+	applyArcadeMode();
+	window.addEventListener('resize', applyArcadeMode);
+
+	if (typeof ResizeObserver !== 'undefined') {
+		const resizeObserver = new ResizeObserver(() => applyArcadeMode());
+		resizeObserver.observe(document.body);
+	}
+
 	const scrim = $j('.scrim');
 	scrim.on('transitionend', function () {
 		scrim.remove();

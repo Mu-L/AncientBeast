@@ -40,7 +40,9 @@ export class Chat {
 		this.$chat = $j('#chat');
 		this.$content = $j('#chatcontent');
 		this.$chat.on('click', () => {
-			this.toggle();
+			if (!$j('body').hasClass('arcade-mode')) {
+				this.toggle();
+			}
 		});
 
 		// Auto show and close chat when game starts #1107

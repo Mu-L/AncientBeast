@@ -1687,24 +1687,61 @@ export class UI {
 		this.selectAbility(-1);
 		return -1;
 	}
-
 	resizeDash() {
-		let zoom1 = $j('#cardwrapper').innerWidth() / $j('#card').outerWidth(),
-			zoom2 =
+		const isArcade = window.innerWidth <= 600 && window.innerHeight <= 700;
+
+		if (isArcade) {
+			$j('#cardwrapper_inner').css('scale', '');
+			$j('#cardwrapper_inner').css({
+				zoom: Math.min(
+					$j('#cardwrapper').innerWidth() / $j('#card').outerWidth(),
+					$j('#cardwrapper').innerHeight() / $j('#card').outerHeight(),
+					1,
+				),
+				left: 'auto',
+				position: 'relative',
+				margin: '0 auto',
+			});
+
+			$j('#materialize_button').css('scale', '');
+			$j('#materialize_button').css({
+				zoom: Math.min(
+					$j('#cardwrapper').innerWidth() / $j('#materialize_button').outerWidth(),
+					$j('#cardwrapper').innerHeight() / $j('#materialize_button').outerHeight(),
+					1,
+				),
+				left: 'auto',
+				position: 'relative',
+				margin: '0 auto',
+			});
+		} else {
+			$j('#cardwrapper_inner').css('zoom', '');
+			const zoom = Math.min(
+				$j('#cardwrapper').innerWidth() / $j('#card').outerWidth(),
 				$j('#cardwrapper').innerHeight() /
-				($j('#card').outerHeight() + $j('#materialize_button').outerHeight()),
-			zoom = Math.min(zoom1, zoom2, 1);
+					($j('#card').outerHeight() + $j('#materialize_button').outerHeight()),
+				1,
+			);
 
-		$j('#cardwrapper_inner').css({
-			scale: zoom,
-			left: ($j('#cardwrapper').innerWidth() - $j('#card').innerWidth() * zoom) / 2,
-			position: 'absolute',
-			margin: 0,
-		});
+			$j('#cardwrapper_inner').css({
+				scale: zoom,
+				left: ($j('#cardwrapper').innerWidth() - $j('#card').innerWidth() * zoom) / 2,
+				position: 'absolute',
+				margin: 0,
+			});
 
-		zoom1 = $j('#creaturerasterwrapper').innerWidth() / $j('#creatureraster').innerWidth();
-		zoom2 = $j('#creaturerasterwrapper').innerHeight() / $j('#creatureraster').innerHeight();
-		zoom = Math.min(zoom1, zoom2, 1);
+			$j('#materialize_button').css('zoom', '');
+			$j('#materialize_button').css({
+				scale: '',
+				left: '',
+				position: '',
+				margin: '',
+			});
+		}
+
+		const zoom1 = $j('#creaturerasterwrapper').innerWidth() / $j('#creatureraster').innerWidth();
+		const zoom2 = $j('#creaturerasterwrapper').innerHeight() / $j('#creatureraster').innerHeight();
+		const zoom = Math.min(zoom1, zoom2, 1);
 
 		$j('#creatureraster').css({
 			scale: zoom,
@@ -1771,6 +1808,10 @@ export class UI {
 		this.$dash.children('#playertabswrapper').addClass('active');
 		this.changePlayerTab(game.activeCreature.team);
 		this.resizeDash();
+
+		if (window.innerWidth <= 600 && window.innerHeight <= 700 && game.activeCreature) {
+			this.chat.showExpanded(game.activeCreature);
+		}
 
 		this.$dash
 			.children('#playertabswrapper')
@@ -2287,13 +2328,16 @@ export class UI {
 	toggleMusicPlayer(force?: boolean) {
 		const $musicPlayerWrapper = $j('#musicplayerwrapper');
 		const shouldOpen = force ?? $musicPlayerWrapper.hasClass('hide');
-		$musicPlayerWrapper.toggleClass('hide', !shouldOpen);
 
 		if (shouldOpen) {
+			this.closeDash();
+			this.closeScoreboard();
+			$musicPlayerWrapper.removeClass('hide');
 			this.musicPlayerOpenCollectiveBanner.onViewOpen();
 			return;
 		}
 
+		$musicPlayerWrapper.addClass('hide');
 		this.musicPlayerOpenCollectiveBanner.onViewClose();
 	}
 
@@ -2346,18 +2390,6 @@ export class UI {
 				return !$j('#musicplayerwrapper').hasClass('hide');
 			case 'secret':
 				return document.getElementById(SECRET_VIEW_ID)?.style.display === 'flex';
-		}
-	}
-
-	// Function to close scoreboard if pressing outside of it
-	easyScoreClose(e) {
-		const score = $j('#scoreboard');
-		const scoreboard = $j('#scoreboard');
-
-		// Check if the target of the click isn't the scoreboard nor a descendant of it
-		if (!score.is(e.target) && score.has(e.target).length === 0) {
-			scoreboard.off('click', this.easyScoreClose);
-			scoreboard.addClass('hide');
 		}
 	}
 
@@ -2657,21 +2689,19 @@ export class UI {
 		// If the scoreboard is already displayed, hide it and return
 		if (!this.$scoreboard.hasClass('hide')) {
 			this.closeScoreboard();
-
 			return;
 		}
+
+		this.closeDash();
+		this.toggleMusicPlayer(false);
 
 		this.scoreboardGameOver = gameOver;
 		this.btnSaveLog.changeState(ButtonStateEnum.normal);
 		this.btnRestartMatch.changeState(ButtonStateEnum.normal);
 		this.btnExit.changeState(ButtonStateEnum.normal);
 
-		// Binding the click outside of the scoreboard to close the view
-		this.$scoreboard.off('click', this.easyScoreClose).on('click', this.easyScoreClose);
-
 		this.renderScoreboard(gameOver, disconnectReason);
 
-		// Finally, show the scoreboard
 		this.$scoreboard.removeClass('hide');
 		this.scoreboardOpenCollectiveBanner.onViewOpen();
 	}
@@ -2764,7 +2794,6 @@ export class UI {
 
 	closeScoreboard() {
 		this.scoreboardOpenCollectiveBanner.onViewClose();
-		this.$scoreboard.off('click', this.easyScoreClose);
 		this.scoreboardGameOver = false;
 		this.btnSaveLog.changeState(ButtonStateEnum.hidden);
 		this.btnRestartMatch.changeState(ButtonStateEnum.hidden);
@@ -2785,9 +2814,11 @@ export class UI {
 			return;
 		}
 
+		this.closeScoreboard();
+		this.toggleMusicPlayer(false);
+
 		game.signals.ui.dispatch('onOpenDash');
 		if (randomize && !this.lastViewedCreature) {
-			// Optional: select a random creature from the grid
 			this.showRandomCreature();
 		} else if (!randomize) {
 			this.showCreature('--', game.activeCreature.team, '');
@@ -2810,23 +2841,43 @@ export class UI {
 
 		game.signals.ui.dispatch('onCloseDash');
 
-		this.$dash.removeClass('active');
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		(this.$dash as any).transition(
-			{
-				opacity: 0,
-				queue: false,
-			},
-			this.dashAnimSpeed,
-			'linear',
-			() => {
-				// Guard against hiding the dash if it was re-opened before this animation completed
-				// (e.g. double-clicking Godlet Printer during location picking)
-				if (!this.dashopen) {
-					this.$dash.hide();
-				}
-			},
-		);
+		const isArcade = window.innerWidth <= 600 && window.innerHeight <= 700;
+
+		if (isArcade) {
+			// Keep the dash visible (display:flex) during the fade-out so the
+			// transition actually animates; remove .active / hide only after.
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(this.$dash as any).transition(
+				{
+					opacity: 0,
+					queue: false,
+				},
+				this.dashAnimSpeed,
+				'linear',
+				() => {
+					this.$dash.removeClass('active');
+					if (!this.dashopen) {
+						this.$dash.hide();
+					}
+				},
+			);
+		} else {
+			this.$dash.removeClass('active');
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(this.$dash as any).transition(
+				{
+					opacity: 0,
+					queue: false,
+				},
+				this.dashAnimSpeed,
+				'linear',
+				() => {
+					if (!this.dashopen) {
+						this.$dash.hide();
+					}
+				},
+			);
+		}
 
 		if (this.materializeToggled && game.activeCreature && game.activeCreature.type === '--') {
 			game.activeCreature.queryMove();
@@ -3799,6 +3850,9 @@ export class UI {
 		ui.game.signals.creature.add((message) => {
 			if (['abilityend', 'activate'].includes(message)) {
 				showDefault();
+				if (window.innerWidth <= 600 && window.innerHeight <= 700 && ui.game.activeCreature) {
+					ui.chat.showExpanded(ui.game.activeCreature);
+				}
 			}
 		});
 
@@ -3897,7 +3951,12 @@ export class UI {
 					hex.cleanOverlayVisualState();
 				});
 			});
-			ui.chat.hideExpanded();
+
+			if (window.innerWidth <= 600 && window.innerHeight <= 700 && ui.game.activeCreature) {
+				ui.chat.showExpanded(ui.game.activeCreature);
+			} else {
+				ui.chat.hideExpanded();
+			}
 
 			// Clear any dashed/shrunken movement visualization added on hover.
 			// Do this BEFORE restoring query state so we don't wipe freshly restored
@@ -3912,11 +3971,6 @@ export class UI {
 			} else {
 				ui.game.grid.updateDisplay();
 			}
-
-			ui.game.grid.refreshActiveCreatureXray();
-
-			ui.queue.xray(-1);
-			ui.quickInfo.clear();
 		};
 
 		const onTurnEndClick = throttle(() => {

@@ -1376,7 +1376,9 @@ export class HexGrid {
 					creature.stopNoActionHintBounce();
 				}
 			}
-			game.UI.chat.hideExpanded();
+			if (window.innerWidth > 600 || window.innerHeight > 700) {
+				game.UI.chat.hideExpanded();
+			}
 			$j('canvas').css('cursor', this.getCursorForMultiplayer('default'));
 		};
 
